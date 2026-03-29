@@ -14,7 +14,9 @@ function readArgValue(args: string[], name: string): string | undefined {
   return undefined;
 }
 
-export function getTerminalOptions(args: string[] = process.argv): TerminalOptions {
+export function getTerminalOptions(
+  args: string[] = process.argv,
+): TerminalOptions {
   const enabled = args.includes('--terminal');
 
   const logLevel =

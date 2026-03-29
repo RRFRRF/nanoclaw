@@ -1,11 +1,5 @@
-import {
-  mountTerminalInkApp,
-  TerminalInkStore,
-} from './terminal-ink.js';
-import {
-  subscribeTerminalLogs,
-  TerminalLogItem,
-} from './terminal-log-sink.js';
+import { mountTerminalInkApp, TerminalInkStore } from './terminal-ink.js';
+import { subscribeTerminalLogs, TerminalLogItem } from './terminal-log-sink.js';
 import { getTerminalOptions } from './terminal-options.js';
 import { AgentStreamEvent, Channel, NewMessage } from './types.js';
 
@@ -36,9 +30,10 @@ export interface TerminalChannelDeps {
     isGroup?: boolean,
   ) => void;
   listAgents: () => TerminalAgentSummary[];
-  createAgent: (
-    input: CreateTerminalAgentInput,
-  ) => { agent: TerminalAgentSummary; created: boolean };
+  createAgent: (input: CreateTerminalAgentInput) => {
+    agent: TerminalAgentSummary;
+    created: boolean;
+  };
   deleteAgent: (query: string) => { agent: TerminalAgentSummary } | null;
   resolveAgent: (query: string) => TerminalAgentSummary | null;
 }
@@ -133,7 +128,9 @@ function getCommandSpec(name: string): CommandSpec | undefined {
 }
 
 function getAgentQueryOptions(agents: TerminalAgentSummary[]): string[] {
-  return [...new Set(agents.flatMap((agent) => [agent.name, agent.folder]))].sort();
+  return [
+    ...new Set(agents.flatMap((agent) => [agent.name, agent.folder])),
+  ].sort();
 }
 
 function padRight(value: string, width: number): string {
@@ -294,7 +291,9 @@ export function getTerminalCompletions(
 
   if (tokens.length <= 1 && !endsWithSpace) {
     const commandNames = COMMAND_SPECS.map((spec) => spec.name);
-    const matches = commandNames.filter((name) => name.startsWith(currentToken));
+    const matches = commandNames.filter((name) =>
+      name.startsWith(currentToken),
+    );
     return [matches.length > 0 ? matches : commandNames, currentToken];
   }
 
@@ -316,7 +315,9 @@ export function getTerminalCompletions(
       return [options, ''];
     }
     if (currentToken.startsWith('--')) {
-      const matches = options.filter((option) => option.startsWith(currentToken));
+      const matches = options.filter((option) =>
+        option.startsWith(currentToken),
+      );
       return [matches.length > 0 ? matches : options, currentToken];
     }
   }
@@ -556,8 +557,9 @@ export class TerminalChannel implements Channel {
         ([key]) =>
           !['time', 'level', 'msg', 'message', 'pid', 'hostname'].includes(key),
       )
-      .map(([key, value]) =>
-        `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`,
+      .map(
+        ([key, value]) =>
+          `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`,
       );
     const text = [msg, ...details].filter(Boolean).join('\n');
     this.inkStore.addMessage({
@@ -815,7 +817,13 @@ export class TerminalChannel implements Channel {
   private emitMessage(agent: TerminalAgentSummary, text: string): void {
     this.setTransientStatus(agent.jid, 'running', 15000);
     const timestamp = new Date().toISOString();
-    this.deps.onChatMetadata(agent.jid, timestamp, agent.name, 'terminal', false);
+    this.deps.onChatMetadata(
+      agent.jid,
+      timestamp,
+      agent.name,
+      'terminal',
+      false,
+    );
     this.deps.onMessage(agent.jid, createLocalMessage(agent.jid, text));
   }
 }

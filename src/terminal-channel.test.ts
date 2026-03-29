@@ -34,13 +34,11 @@ describe('parseTerminalCommand', () => {
   });
 
   it('parses /send with quoted target and message', () => {
-    expect(parseTerminalCommand('/send "agent-one" review this repo')).toEqual(
-      {
-        type: 'send',
-        target: 'agent-one',
-        message: 'review this repo',
-      },
-    );
+    expect(parseTerminalCommand('/send "agent-one" review this repo')).toEqual({
+      type: 'send',
+      target: 'agent-one',
+      message: 'review this repo',
+    });
   });
 
   it('returns usage for malformed commands', () => {

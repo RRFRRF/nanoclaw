@@ -115,7 +115,12 @@ export function startCredentialProxy(
           });
 
           upstream.on('error', (err) => {
-            const code = err && typeof err === 'object' ? 'code' in err ? err.code : undefined : undefined;
+            const code =
+              err && typeof err === 'object'
+                ? 'code' in err
+                  ? err.code
+                  : undefined
+                : undefined;
             const isRetryable =
               !downstreamClosed &&
               !res.headersSent &&

@@ -524,7 +524,9 @@ export function setRouterState(key: string, value: string): void {
 
 export function getSession(groupFolder: string): SessionState | undefined {
   const row = db
-    .prepare('SELECT session_id, resume_at FROM sessions WHERE group_folder = ?')
+    .prepare(
+      'SELECT session_id, resume_at FROM sessions WHERE group_folder = ?',
+    )
     .get(groupFolder) as
     | { session_id: string; resume_at: string | null }
     | undefined;

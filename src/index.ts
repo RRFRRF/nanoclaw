@@ -46,7 +46,11 @@ import {
   storeMessage,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
-import { isValidGroupFolder, resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
+import {
+  isValidGroupFolder,
+  resolveGroupFolderPath,
+  resolveGroupIpcPath,
+} from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
@@ -71,10 +75,7 @@ import {
   SessionState,
 } from './types.js';
 import { logger } from './logger.js';
-import {
-  TerminalAgentSummary,
-  TerminalChannel,
-} from './terminal-channel.js';
+import { TerminalAgentSummary, TerminalChannel } from './terminal-channel.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -153,7 +154,8 @@ function resolveLocalTerminalAgent(
 
   const partial = agents.filter(
     (agent) =>
-      agent.folder.toLowerCase().includes(q) || agent.name.toLowerCase().includes(q),
+      agent.folder.toLowerCase().includes(q) ||
+      agent.name.toLowerCase().includes(q),
   );
   if (partial.length === 1) return partial[0];
   if (partial.length > 1) {
@@ -241,7 +243,8 @@ function createLocalTerminalAgent(
   const existing = resolveLocalTerminalAgent(name);
   if (existing) {
     if (options?.mounts && options.mounts.length > 0) {
-      const currentMounts = existing.group.containerConfig?.additionalMounts || [];
+      const currentMounts =
+        existing.group.containerConfig?.additionalMounts || [];
       const mergedMounts = [...currentMounts];
 
       for (const hostPath of options.mounts) {
@@ -291,7 +294,9 @@ function createLocalTerminalAgent(
   const baseFolder = `local-${slugifyLocalAgentName(name)}`;
   let folder = baseFolder;
   let suffix = 2;
-  while (Object.values(registeredGroups).some((group) => group.folder === folder)) {
+  while (
+    Object.values(registeredGroups).some((group) => group.folder === folder)
+  ) {
     folder = `${baseFolder}-${suffix}`;
     suffix += 1;
   }
@@ -485,7 +490,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         typeof result.result === 'string'
           ? result.result
           : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks â€?agent uses these for internal reasoning
+      // Strip <internal>...</internal> blocks ï¿½?agent uses these for internal reasoning
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
       if (text) {
@@ -509,7 +514,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
-    // If we already sent output to the user, don't roll back the cursor â€?
+    // If we already sent output to the user, don't roll back the cursor ï¿½?
     // the user got their response and re-processing would send duplicates.
     if (outputSentToUser) {
       logger.warn(
@@ -708,7 +713,7 @@ async function startMessageLoop(): Promise<void> {
                 logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
               );
           } else {
-            // No active container â€?enqueue for a new one
+            // No active container ï¿½?enqueue for a new one
             queue.enqueueMessageCheck(chatJid);
           }
         }
@@ -814,7 +819,7 @@ async function main(): Promise<void> {
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
-      // Remote control commands â€?intercept before storage
+      // Remote control commands ï¿½?intercept before storage
       const trimmed = msg.content.trim();
       if (trimmed === '/remote-control' || trimmed === '/remote-control-end') {
         handleRemoteControl(trimmed, chatJid, msg).catch((err) =>
@@ -860,7 +865,7 @@ async function main(): Promise<void> {
     if (!channel) {
       logger.warn(
         { channel: channelName },
-        'Channel installed but credentials missing â€?skipping. Check .env or re-run the channel skill.',
+        'Channel installed but credentials missing ï¿½?skipping. Check .env or re-run the channel skill.',
       );
       continue;
     }
@@ -983,8 +988,3 @@ if (isDirectRun) {
     process.exit(1);
   });
 }
-
-
-
-
-

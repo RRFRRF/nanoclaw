@@ -253,7 +253,9 @@ export function ensureMountAllowlist(
   requestedPaths: string[],
   options?: { readWrite?: boolean },
 ): EnsureMountAllowlistResult {
-  const uniquePaths = [...new Set(requestedPaths.map((p) => p.trim()).filter(Boolean))];
+  const uniquePaths = [
+    ...new Set(requestedPaths.map((p) => p.trim()).filter(Boolean)),
+  ];
   const readWrite = options?.readWrite === true;
 
   if (uniquePaths.length === 0) {
@@ -292,8 +294,11 @@ export function ensureMountAllowlist(
 
     const alreadyAllowed = allowlist.allowedRoots.some((root) => {
       const realRoot =
-        getRealPath(expandPath(root.path)) || path.resolve(expandPath(root.path));
-      return pathCovers(realRoot, realPath) && (!readWrite || root.allowReadWrite);
+        getRealPath(expandPath(root.path)) ||
+        path.resolve(expandPath(root.path));
+      return (
+        pathCovers(realRoot, realPath) && (!readWrite || root.allowReadWrite)
+      );
     });
     if (alreadyAllowed) continue;
 
