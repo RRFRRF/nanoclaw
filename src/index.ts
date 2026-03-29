@@ -198,6 +198,14 @@ function upsertSessionState(
   setSession(groupFolder, nextState);
 }
 
+function clearSessionState(groupFolder: string): void {
+  delete sessions[groupFolder];
+  deleteSession(groupFolder);
+}
+
+function isMissingConversationError(error?: string): boolean {
+  return !!error && /No conversation found with session ID/i.test(error);
+}
 function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
@@ -490,7 +498,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         typeof result.result === 'string'
           ? result.result
           : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks ï¿½?agent uses these for internal reasoning
+      // Strip <internal>...</internal> blocks ï¿?agent uses these for internal reasoning
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
       if (text) {
@@ -514,7 +522,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
-    // If we already sent output to the user, don't roll back the cursor ï¿½?
+    // If we already sent output to the user, don't roll back the cursor ï¿?
     // the user got their response and re-processing would send duplicates.
     if (outputSentToUser) {
       logger.warn(
@@ -541,6 +549,7 @@ async function runAgent(
   prompt: string,
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  retryOnInvalidSession: boolean = true,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
   const session = sessions[group.folder];
@@ -575,7 +584,7 @@ async function runAgent(
   // Wrap onOutput to track session ID from streamed results
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
-        if (output.newSessionId) {
+        if (output.newSessionId && !isMissingConversationError(output.error)) {
           upsertSessionState(group.folder, {
             sessionId: output.newSessionId,
             resumeAt: output.lastAssistantUuid,
@@ -602,7 +611,7 @@ async function runAgent(
       wrappedOnOutput,
     );
 
-    if (output.newSessionId) {
+    if (output.newSessionId && !isMissingConversationError(output.error)) {
       upsertSessionState(group.folder, {
         sessionId: output.newSessionId,
         resumeAt: output.lastAssistantUuid,
@@ -610,6 +619,15 @@ async function runAgent(
     }
 
     if (output.status === 'error') {
+      if (retryOnInvalidSession && sessionId && isMissingConversationError(output.error)) {
+        logger.warn(
+          { group: group.name, sessionId, error: output.error },
+          'Stored session is no longer valid, clearing it and retrying once',
+        );
+        clearSessionState(group.folder);
+        return runAgent(group, prompt, chatJid, onOutput, false);
+      }
+
       logger.error(
         { group: group.name, error: output.error },
         'Container agent error',
@@ -713,7 +731,7 @@ async function startMessageLoop(): Promise<void> {
                 logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
               );
           } else {
-            // No active container ï¿½?enqueue for a new one
+            // No active container ï¿?enqueue for a new one
             queue.enqueueMessageCheck(chatJid);
           }
         }
@@ -819,7 +837,7 @@ async function main(): Promise<void> {
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
-      // Remote control commands ï¿½?intercept before storage
+      // Remote control commands ï¿?intercept before storage
       const trimmed = msg.content.trim();
       if (trimmed === '/remote-control' || trimmed === '/remote-control-end') {
         handleRemoteControl(trimmed, chatJid, msg).catch((err) =>
@@ -865,7 +883,7 @@ async function main(): Promise<void> {
     if (!channel) {
       logger.warn(
         { channel: channelName },
-        'Channel installed but credentials missing ï¿½?skipping. Check .env or re-run the channel skill.',
+        'Channel installed but credentials missing ï¿?skipping. Check .env or re-run the channel skill.',
       );
       continue;
     }
@@ -988,3 +1006,4 @@ if (isDirectRun) {
     process.exit(1);
   });
 }
+

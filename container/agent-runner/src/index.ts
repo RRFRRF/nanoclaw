@@ -212,6 +212,61 @@ interface ParsedMessage {
 interface ContentBlockLike {
   type?: string;
   text?: string;
+  thinking?: string;
+  name?: string;
+  input?: unknown;
+  id?: string;
+}
+
+function stringifyBlockInput(input: unknown): string {
+  if (input === undefined || input === null) return '';
+  if (typeof input === 'string') return input;
+  try {
+    return JSON.stringify(input, null, 2);
+  } catch {
+    return String(input);
+  }
+}
+
+function renderContentBlocks(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+
+  const rendered = content
+    .filter(
+      (block): block is ContentBlockLike =>
+        typeof block === 'object' && block !== null,
+    )
+    .map((block) => {
+      if (block.type === 'text' && typeof block.text === 'string') {
+        return block.text;
+      }
+
+      if (
+        block.type === 'thinking' &&
+        typeof block.thinking === 'string' &&
+        block.thinking.trim()
+      ) {
+        return `<thinking>\n${block.thinking.trim()}\n</thinking>`;
+      }
+
+      if (block.type === 'redacted_thinking') {
+        return '<thinking>\n[redacted thinking]\n</thinking>';
+      }
+
+      if (block.type === 'tool_use') {
+        const toolName = block.name || 'tool';
+        const toolInput = stringifyBlockInput(block.input);
+        return toolInput
+          ? `<tool_use name="${toolName}">\n${toolInput}\n</tool_use>`
+          : `<tool_use name="${toolName}" />`;
+      }
+
+      return '';
+    })
+    .filter((part) => part.trim().length > 0);
+
+  return rendered.join('\n\n');
 }
 
 function parseTranscript(content: string): ParsedMessage[] {
@@ -227,10 +282,7 @@ function parseTranscript(content: string): ParsedMessage[] {
           : entry.message.content.map((c: { text?: string }) => c.text || '').join('');
         if (text) messages.push({ role: 'user', content: text });
       } else if (entry.type === 'assistant' && entry.message?.content) {
-        const textParts = entry.message.content
-          .filter((c: { type: string }) => c.type === 'text')
-          .map((c: { text: string }) => c.text);
-        const text = textParts.join('');
+        const text = renderContentBlocks(entry.message.content);
         if (text) messages.push({ role: 'assistant', content: text });
       }
     } catch {
@@ -241,16 +293,7 @@ function parseTranscript(content: string): ParsedMessage[] {
 }
 
 function extractTextContent(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .filter(
-      (block): block is ContentBlockLike =>
-        typeof block === 'object' && block !== null,
-    )
-    .filter((block) => block.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text || '')
-    .join('');
+  return renderContentBlocks(content);
 }
 
 function extractAssistantText(message: unknown): string {
@@ -279,7 +322,11 @@ function formatTaskStatus(message: unknown): string | null {
   if (typeof payload.message === 'string' && payload.message.trim()) {
     parts.push(payload.message.trim());
   } else {
-    const nestedText = extractTextContent(payload.message?.content).trim();
+    const nestedMessage =
+      typeof payload.message === 'object' && payload.message !== null
+        ? payload.message.content
+        : undefined;
+    const nestedText = extractTextContent(nestedMessage).trim();
     if (nestedText) parts.push(nestedText);
   }
 
