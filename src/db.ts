@@ -9,6 +9,7 @@ import {
   NewMessage,
   RegisteredGroup,
   ScheduledTask,
+  SessionState,
   TaskRunLog,
 } from './types.js';
 
@@ -71,7 +72,8 @@ function createSchema(database: Database.Database): void {
     );
     CREATE TABLE IF NOT EXISTS sessions (
       group_folder TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL
+      session_id TEXT NOT NULL,
+      resume_at TEXT
     );
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
@@ -138,6 +140,13 @@ function createSchema(database: Database.Database): void {
     );
   } catch {
     /* columns already exist */
+  }
+
+  // Add resume_at column if it doesn't exist (migration for existing DBs)
+  try {
+    database.exec(`ALTER TABLE sessions ADD COLUMN resume_at TEXT`);
+  } catch {
+    /* column already exists */
   }
 }
 
@@ -513,26 +522,43 @@ export function setRouterState(key: string, value: string): void {
 
 // --- Session accessors ---
 
-export function getSession(groupFolder: string): string | undefined {
+export function getSession(groupFolder: string): SessionState | undefined {
   const row = db
-    .prepare('SELECT session_id FROM sessions WHERE group_folder = ?')
-    .get(groupFolder) as { session_id: string } | undefined;
-  return row?.session_id;
+    .prepare('SELECT session_id, resume_at FROM sessions WHERE group_folder = ?')
+    .get(groupFolder) as
+    | { session_id: string; resume_at: string | null }
+    | undefined;
+  if (!row) return undefined;
+  return {
+    sessionId: row.session_id,
+    resumeAt: row.resume_at,
+  };
 }
 
-export function setSession(groupFolder: string, sessionId: string): void {
+export function setSession(groupFolder: string, session: SessionState): void {
   db.prepare(
-    'INSERT OR REPLACE INTO sessions (group_folder, session_id) VALUES (?, ?)',
-  ).run(groupFolder, sessionId);
+    'INSERT OR REPLACE INTO sessions (group_folder, session_id, resume_at) VALUES (?, ?, ?)',
+  ).run(groupFolder, session.sessionId, session.resumeAt || null);
 }
 
-export function getAllSessions(): Record<string, string> {
+export function deleteSession(groupFolder: string): void {
+  db.prepare('DELETE FROM sessions WHERE group_folder = ?').run(groupFolder);
+}
+
+export function getAllSessions(): Record<string, SessionState> {
   const rows = db
-    .prepare('SELECT group_folder, session_id FROM sessions')
-    .all() as Array<{ group_folder: string; session_id: string }>;
-  const result: Record<string, string> = {};
+    .prepare('SELECT group_folder, session_id, resume_at FROM sessions')
+    .all() as Array<{
+    group_folder: string;
+    session_id: string;
+    resume_at: string | null;
+  }>;
+  const result: Record<string, SessionState> = {};
   for (const row of rows) {
-    result[row.group_folder] = row.session_id;
+    result[row.group_folder] = {
+      sessionId: row.session_id,
+      resumeAt: row.resume_at,
+    };
   }
   return result;
 }
@@ -596,6 +622,12 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
     group.isMain ? 1 : 0,
   );
+}
+
+export function deleteRegisteredGroup(jid: string): void {
+  db.prepare('DELETE FROM messages WHERE chat_jid = ?').run(jid);
+  db.prepare('DELETE FROM chats WHERE jid = ?').run(jid);
+  db.prepare('DELETE FROM registered_groups WHERE jid = ?').run(jid);
 }
 
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
@@ -669,11 +701,18 @@ function migrateJsonState(): void {
   // Migrate sessions.json
   const sessions = migrateFile('sessions.json') as Record<
     string,
-    string
+    string | SessionState
   > | null;
   if (sessions) {
-    for (const [folder, sessionId] of Object.entries(sessions)) {
-      setSession(folder, sessionId);
+    for (const [folder, session] of Object.entries(sessions)) {
+      if (typeof session === 'string') {
+        setSession(folder, { sessionId: session });
+        continue;
+      }
+      setSession(folder, {
+        sessionId: session.sessionId,
+        resumeAt: session.resumeAt,
+      });
     }
   }
 

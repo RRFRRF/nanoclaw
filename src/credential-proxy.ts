@@ -10,9 +10,14 @@
  *             Proxy injects real OAuth token on that exchange request;
  *             subsequent requests carry the temp key which is valid as-is.
  */
-import { createServer, Server } from 'http';
-import { request as httpsRequest } from 'https';
-import { request as httpRequest, RequestOptions } from 'http';
+import {
+  Agent as HttpAgent,
+  createServer,
+  request as httpRequest,
+  RequestOptions,
+  Server,
+} from 'http';
+import { Agent as HttpsAgent, request as httpsRequest } from 'https';
 
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
@@ -43,6 +48,9 @@ export function startCredentialProxy(
   );
   const isHttps = upstreamUrl.protocol === 'https:';
   const makeRequest = isHttps ? httpsRequest : httpRequest;
+  const upstreamAgent = isHttps
+    ? new HttpsAgent({ keepAlive: true })
+    : new HttpAgent({ keepAlive: true });
 
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
@@ -79,33 +87,75 @@ export function startCredentialProxy(
           }
         }
 
-        const upstream = makeRequest(
-          {
-            hostname: upstreamUrl.hostname,
-            port: upstreamUrl.port || (isHttps ? 443 : 80),
-            path: req.url,
-            method: req.method,
-            headers,
-          } as RequestOptions,
-          (upRes) => {
-            res.writeHead(upRes.statusCode!, upRes.headers);
-            upRes.pipe(res);
-          },
-        );
-
-        upstream.on('error', (err) => {
-          logger.error(
-            { err, url: req.url },
-            'Credential proxy upstream error',
-          );
-          if (!res.headersSent) {
-            res.writeHead(502);
-            res.end('Bad Gateway');
-          }
+        let downstreamClosed = false;
+        res.on('close', () => {
+          downstreamClosed = true;
         });
 
-        upstream.write(body);
-        upstream.end();
+        const sendUpstream = (attempt: number) => {
+          const upstream = makeRequest(
+            {
+              hostname: upstreamUrl.hostname,
+              port: upstreamUrl.port || (isHttps ? 443 : 80),
+              path: req.url,
+              method: req.method,
+              headers,
+              agent: upstreamAgent,
+            } as RequestOptions,
+            (upRes) => {
+              res.writeHead(upRes.statusCode!, upRes.headers);
+              upRes.pipe(res);
+            },
+          );
+
+          res.once('close', () => {
+            if (!upstream.destroyed) {
+              upstream.destroy();
+            }
+          });
+
+          upstream.on('error', (err) => {
+            const code = err && typeof err === 'object' ? 'code' in err ? err.code : undefined : undefined;
+            const isRetryable =
+              !downstreamClosed &&
+              !res.headersSent &&
+              attempt === 0 &&
+              (code === 'ECONNRESET' ||
+                code === 'ETIMEDOUT' ||
+                code === 'EPIPE');
+
+            if (isRetryable) {
+              logger.warn(
+                { err, url: req.url, attempt: attempt + 1 },
+                'Credential proxy upstream error, retrying once',
+              );
+              sendUpstream(attempt + 1);
+              return;
+            }
+
+            if (downstreamClosed) {
+              logger.debug(
+                { url: req.url, err },
+                'Credential proxy downstream closed before upstream completed',
+              );
+              return;
+            }
+
+            logger.error(
+              { err, url: req.url, attempt },
+              'Credential proxy upstream error',
+            );
+            if (!res.headersSent) {
+              res.writeHead(502);
+              res.end('Bad Gateway');
+            }
+          });
+
+          upstream.write(body);
+          upstream.end();
+        };
+
+        sendUpstream(0);
       });
     });
 

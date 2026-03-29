@@ -7,6 +7,11 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  ANTHROPIC_DEFAULT_HAIKU_MODEL,
+  ANTHROPIC_DEFAULT_OPUS_MODEL,
+  ANTHROPIC_DEFAULT_SONNET_MODEL,
+  ANTHROPIC_MODEL,
+  CLAUDE_CODE_SUBAGENT_MODEL,
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
@@ -36,6 +41,7 @@ const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 export interface ContainerInput {
   prompt: string;
   sessionId?: string;
+  resumeAt?: string;
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
@@ -47,6 +53,12 @@ export interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
   newSessionId?: string;
+  lastAssistantUuid?: string;
+  event?: {
+    type: 'assistant' | 'status';
+    text: string;
+    replace?: boolean;
+  };
   error?: string;
 }
 
@@ -238,6 +250,17 @@ function buildContainerArgs(
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
 
+  const passthroughEnv = [
+    ['ANTHROPIC_MODEL', ANTHROPIC_MODEL],
+    ['ANTHROPIC_DEFAULT_OPUS_MODEL', ANTHROPIC_DEFAULT_OPUS_MODEL],
+    ['ANTHROPIC_DEFAULT_SONNET_MODEL', ANTHROPIC_DEFAULT_SONNET_MODEL],
+    ['ANTHROPIC_DEFAULT_HAIKU_MODEL', ANTHROPIC_DEFAULT_HAIKU_MODEL],
+    ['CLAUDE_CODE_SUBAGENT_MODEL', CLAUDE_CODE_SUBAGENT_MODEL],
+  ] as const;
+  for (const [key, value] of passthroughEnv) {
+    if (value) args.push('-e', `${key}=${value}`);
+  }
+
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
 
@@ -324,6 +347,7 @@ export async function runContainerAgent(
     // Streaming output: parse OUTPUT_START/END marker pairs as they arrive
     let parseBuffer = '';
     let newSessionId: string | undefined;
+    let lastAssistantUuid: string | undefined;
     let outputChain = Promise.resolve();
 
     container.stdout.on('data', (data) => {
@@ -361,6 +385,9 @@ export async function runContainerAgent(
             const parsed: ContainerOutput = JSON.parse(jsonStr);
             if (parsed.newSessionId) {
               newSessionId = parsed.newSessionId;
+            }
+            if (parsed.lastAssistantUuid) {
+              lastAssistantUuid = parsed.lastAssistantUuid;
             }
             hadStreamingOutput = true;
             // Activity detected — reset the hard timeout
@@ -465,6 +492,7 @@ export async function runContainerAgent(
               status: 'success',
               result: null,
               newSessionId,
+              lastAssistantUuid,
             });
           });
           return;
@@ -583,6 +611,7 @@ export async function runContainerAgent(
             status: 'success',
             result: null,
             newSessionId,
+            lastAssistantUuid,
           });
         });
         return;

@@ -4,6 +4,8 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
+  DATA_DIR,
+  GROUPS_DIR,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
   TIMEZONE,
@@ -31,6 +33,8 @@ import {
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
+  deleteRegisteredGroup,
+  deleteSession,
   getMessagesSince,
   getNewMessages,
   getRouterState,
@@ -42,7 +46,7 @@ import {
   storeMessage,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
-import { resolveGroupFolderPath } from './group-folder.js';
+import { isValidGroupFolder, resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
@@ -56,21 +60,109 @@ import {
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
+import { ensureMountAllowlist } from './mount-security.js';
+import { acquireServiceLock, releaseServiceLock } from './service-lock.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import {
+  AdditionalMount,
+  Channel,
+  NewMessage,
+  RegisteredGroup,
+  SessionState,
+} from './types.js';
 import { logger } from './logger.js';
+import {
+  TerminalAgentSummary,
+  TerminalChannel,
+} from './terminal-channel.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
 
 let lastTimestamp = '';
-let sessions: Record<string, string> = {};
+let sessions: Record<string, SessionState> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
+const TERMINAL_MODE = process.argv.includes('--terminal');
+
+function isLocalTerminalJid(jid: string): boolean {
+  return jid.startsWith('local:');
+}
+
+function slugifyLocalAgentName(name: string): string {
+  const normalized = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  if (!normalized) {
+    throw new Error('Agent name must contain letters or numbers');
+  }
+  return normalized.slice(0, 54);
+}
+
+function getLocalTerminalAgents(): Array<
+  TerminalAgentSummary & { group: RegisteredGroup }
+> {
+  return Object.entries(registeredGroups)
+    .filter(([jid]) => isLocalTerminalJid(jid))
+    .map(([jid, group]) => {
+      const runtime = queue.getGroupRuntimeStatus(jid);
+      const mounts =
+        group.containerConfig?.additionalMounts?.map((mount) => {
+          const mode = mount.readonly === false ? 'rw' : 'ro';
+          return `${mount.hostPath} (${mode})`;
+        }) || [];
+      let status = 'idle';
+      if (runtime.isTaskContainer) status = 'task';
+      else if (runtime.active && runtime.idleWaiting) status = 'waiting-input';
+      else if (runtime.active) status = 'running';
+
+      return {
+        jid,
+        name: group.name,
+        folder: group.folder,
+        active: runtime.active,
+        status,
+        sessionId: sessions[group.folder]?.sessionId || null,
+        containerName: runtime.containerName,
+        mounts,
+        group,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function resolveLocalTerminalAgent(
+  query: string,
+): (TerminalAgentSummary & { group: RegisteredGroup }) | null {
+  const q = query.trim().toLowerCase();
+  if (!q) return null;
+
+  const agents = getLocalTerminalAgents();
+  const exact =
+    agents.find((agent) => agent.jid.toLowerCase() === q) ||
+    agents.find((agent) => agent.folder.toLowerCase() === q) ||
+    agents.find((agent) => agent.name.toLowerCase() === q);
+  if (exact) return exact;
+
+  const partial = agents.filter(
+    (agent) =>
+      agent.folder.toLowerCase().includes(q) || agent.name.toLowerCase().includes(q),
+  );
+  if (partial.length === 1) return partial[0];
+  if (partial.length > 1) {
+    throw new Error(
+      `Ambiguous agent "${query}": ${partial.map((agent) => agent.name).join(', ')}`,
+    );
+  }
+  return null;
+}
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -87,6 +179,21 @@ function loadState(): void {
     { groupCount: Object.keys(registeredGroups).length },
     'State loaded',
   );
+}
+
+function upsertSessionState(
+  groupFolder: string,
+  updates: Partial<SessionState> & Pick<SessionState, 'sessionId'>,
+): void {
+  const nextState: SessionState = {
+    sessionId: updates.sessionId,
+    resumeAt:
+      updates.resumeAt !== undefined
+        ? updates.resumeAt
+        : sessions[groupFolder]?.resumeAt || null,
+  };
+  sessions[groupFolder] = nextState;
+  setSession(groupFolder, nextState);
 }
 
 function saveState(): void {
@@ -116,6 +223,159 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
     { jid, name: group.name, folder: group.folder },
     'Group registered',
   );
+}
+
+function createLocalTerminalAgent(
+  name: string,
+  options?: { mounts?: string[]; readWrite?: boolean },
+): {
+  agent: TerminalAgentSummary;
+  created: boolean;
+} {
+  if (options?.mounts && options.mounts.length > 0) {
+    ensureMountAllowlist(options.mounts, {
+      readWrite: options.readWrite,
+    });
+  }
+
+  const existing = resolveLocalTerminalAgent(name);
+  if (existing) {
+    if (options?.mounts && options.mounts.length > 0) {
+      const currentMounts = existing.group.containerConfig?.additionalMounts || [];
+      const mergedMounts = [...currentMounts];
+
+      for (const hostPath of options.mounts) {
+        const index = mergedMounts.findIndex(
+          (mount) => mount.hostPath === hostPath,
+        );
+        const nextMount = {
+          hostPath,
+          readonly: options.readWrite ? false : true,
+        };
+
+        if (index >= 0) mergedMounts[index] = nextMount;
+        else mergedMounts.push(nextMount);
+      }
+
+      const updatedGroup: RegisteredGroup = {
+        ...existing.group,
+        containerConfig: {
+          ...existing.group.containerConfig,
+          additionalMounts: mergedMounts,
+        },
+      };
+      registeredGroups[existing.jid] = updatedGroup;
+      setRegisteredGroup(existing.jid, updatedGroup);
+      existing.group = updatedGroup;
+      existing.mounts = mergedMounts.map((mount) => {
+        const mode = mount.readonly === false ? 'rw' : 'ro';
+        return `${mount.hostPath} (${mode})`;
+      });
+    }
+
+    return {
+      created: false,
+      agent: {
+        jid: existing.jid,
+        name: existing.name,
+        folder: existing.folder,
+        active: existing.active,
+        status: existing.status,
+        sessionId: existing.sessionId,
+        containerName: existing.containerName,
+        mounts: existing.mounts,
+      },
+    };
+  }
+
+  const baseFolder = `local-${slugifyLocalAgentName(name)}`;
+  let folder = baseFolder;
+  let suffix = 2;
+  while (Object.values(registeredGroups).some((group) => group.folder === folder)) {
+    folder = `${baseFolder}-${suffix}`;
+    suffix += 1;
+  }
+
+  if (!isValidGroupFolder(folder)) {
+    throw new Error(`Cannot create valid folder for agent "${name}"`);
+  }
+
+  const jid = `local:${folder}`;
+  const now = new Date().toISOString();
+  const additionalMounts: AdditionalMount[] | undefined =
+    options?.mounts && options.mounts.length > 0
+      ? options.mounts.map((hostPath) => ({
+          hostPath,
+          readonly: options.readWrite ? false : true,
+        }))
+      : undefined;
+  registerGroup(jid, {
+    name,
+    folder,
+    trigger: `@${ASSISTANT_NAME}`,
+    added_at: now,
+    containerConfig: additionalMounts ? { additionalMounts } : undefined,
+    requiresTrigger: false,
+  });
+  storeChatMetadata(jid, now, name, 'terminal', false);
+
+  return {
+    created: true,
+    agent: {
+      jid,
+      name,
+      folder,
+      active: queue.isGroupActive(jid),
+      status: 'idle',
+      sessionId: sessions[folder]?.sessionId || null,
+      containerName: null,
+      mounts:
+        additionalMounts?.map((mount) => {
+          const mode = mount.readonly === false ? 'rw' : 'ro';
+          return `${mount.hostPath} (${mode})`;
+        }) || [],
+    },
+  };
+}
+
+function deleteLocalTerminalAgent(
+  query: string,
+): { agent: TerminalAgentSummary } | null {
+  const resolved = resolveLocalTerminalAgent(query);
+  if (!resolved) return null;
+
+  queue.closeStdin(resolved.jid);
+  delete registeredGroups[resolved.jid];
+  deleteRegisteredGroup(resolved.jid);
+  deleteSession(resolved.folder);
+  delete lastAgentTimestamp[resolved.jid];
+  saveState();
+
+  const groupPath = resolveGroupFolderPath(resolved.folder);
+  fs.rmSync(groupPath, { recursive: true, force: true });
+
+  const ipcPath = resolveGroupIpcPath(resolved.folder);
+  fs.rmSync(ipcPath, { recursive: true, force: true });
+
+  const sessionPath = path.join(DATA_DIR, 'sessions', resolved.folder);
+  const sessionBase = path.resolve(DATA_DIR, 'sessions');
+  const relative = path.relative(sessionBase, sessionPath);
+  if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+    fs.rmSync(sessionPath, { recursive: true, force: true });
+  }
+
+  return {
+    agent: {
+      jid: resolved.jid,
+      name: resolved.name,
+      folder: resolved.folder,
+      active: resolved.active,
+      status: resolved.status,
+      sessionId: resolved.sessionId,
+      containerName: resolved.containerName,
+      mounts: resolved.mounts,
+    },
+  };
 }
 
 /**
@@ -212,13 +472,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let outputSentToUser = false;
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
-    // Streaming output callback â€” called for each agent result
+    if (result.event) {
+      await channel.sendAgentEvent?.(chatJid, result.event);
+      if (result.event.type === 'assistant') {
+        outputSentToUser = true;
+        resetIdleTimer();
+      }
+    }
+
     if (result.result) {
       const raw =
         typeof result.result === 'string'
           ? result.result
           : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks â€” agent uses these for internal reasoning
+      // Strip <internal>...</internal> blocks â€?agent uses these for internal reasoning
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
       if (text) {
@@ -229,7 +496,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       resetIdleTimer();
     }
 
-    if (result.status === 'success') {
+    if (result.status === 'success' && !result.result && !result.event) {
       queue.notifyIdle(chatJid);
     }
 
@@ -242,7 +509,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
-    // If we already sent output to the user, don't roll back the cursor â€”
+    // If we already sent output to the user, don't roll back the cursor â€?
     // the user got their response and re-processing would send duplicates.
     if (outputSentToUser) {
       logger.warn(
@@ -271,7 +538,9 @@ async function runAgent(
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
-  const sessionId = sessions[group.folder];
+  const session = sessions[group.folder];
+  const sessionId = session?.sessionId;
+  const resumeAt = session?.resumeAt || undefined;
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -302,8 +571,10 @@ async function runAgent(
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
-          sessions[group.folder] = output.newSessionId;
-          setSession(group.folder, output.newSessionId);
+          upsertSessionState(group.folder, {
+            sessionId: output.newSessionId,
+            resumeAt: output.lastAssistantUuid,
+          });
         }
         await onOutput(output);
       }
@@ -315,6 +586,7 @@ async function runAgent(
       {
         prompt,
         sessionId,
+        resumeAt,
         groupFolder: group.folder,
         chatJid,
         isMain,
@@ -326,8 +598,10 @@ async function runAgent(
     );
 
     if (output.newSessionId) {
-      sessions[group.folder] = output.newSessionId;
-      setSession(group.folder, output.newSessionId);
+      upsertSessionState(group.folder, {
+        sessionId: output.newSessionId,
+        resumeAt: output.lastAssistantUuid,
+      });
     }
 
     if (output.status === 'error') {
@@ -434,7 +708,7 @@ async function startMessageLoop(): Promise<void> {
                 logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
               );
           } else {
-            // No active container â€” enqueue for a new one
+            // No active container â€?enqueue for a new one
             queue.enqueueMessageCheck(chatJid);
           }
         }
@@ -470,6 +744,7 @@ function ensureContainerSystemRunning(): void {
 }
 
 async function main(): Promise<void> {
+  acquireServiceLock();
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
@@ -488,6 +763,7 @@ async function main(): Promise<void> {
     proxyServer.close();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
+    releaseServiceLock();
     process.exit(0);
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
@@ -538,7 +814,7 @@ async function main(): Promise<void> {
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
-      // Remote control commands â€” intercept before storage
+      // Remote control commands â€?intercept before storage
       const trimmed = msg.content.trim();
       if (trimmed === '/remote-control' || trimmed === '/remote-control-end') {
         handleRemoteControl(trimmed, chatJid, msg).catch((err) =>
@@ -584,13 +860,51 @@ async function main(): Promise<void> {
     if (!channel) {
       logger.warn(
         { channel: channelName },
-        'Channel installed but credentials missing â€” skipping. Check .env or re-run the channel skill.',
+        'Channel installed but credentials missing â€?skipping. Check .env or re-run the channel skill.',
       );
       continue;
     }
     channels.push(channel);
     await channel.connect();
   }
+
+  if (TERMINAL_MODE) {
+    const terminalChannel = new TerminalChannel({
+      onMessage: channelOpts.onMessage,
+      onChatMetadata: channelOpts.onChatMetadata,
+      listAgents: () =>
+        getLocalTerminalAgents().map((agent) => ({
+          jid: agent.jid,
+          name: agent.name,
+          folder: agent.folder,
+          active: agent.active,
+          status: agent.status,
+          sessionId: agent.sessionId,
+          containerName: agent.containerName,
+          mounts: agent.mounts,
+        })),
+      createAgent: ({ name, mounts, readWrite }) =>
+        createLocalTerminalAgent(name, { mounts, readWrite }),
+      deleteAgent: (query) => deleteLocalTerminalAgent(query),
+      resolveAgent: (query) => {
+        const resolved = resolveLocalTerminalAgent(query);
+        if (!resolved) return null;
+        return {
+          jid: resolved.jid,
+          name: resolved.name,
+          folder: resolved.folder,
+          active: resolved.active,
+          status: resolved.status,
+          sessionId: resolved.sessionId,
+          containerName: resolved.containerName,
+          mounts: resolved.mounts,
+        };
+      },
+    });
+    channels.push(terminalChannel);
+    await terminalChannel.connect();
+  }
+
   if (channels.length === 0) {
     logger.fatal('No channels connected');
     process.exit(1);
@@ -600,6 +914,8 @@ async function main(): Promise<void> {
   startSchedulerLoop({
     registeredGroups: () => registeredGroups,
     getSessions: () => sessions,
+    upsertSession: (groupFolder, session) =>
+      upsertSessionState(groupFolder, session),
     queue,
     onProcess: (groupJid, proc, containerName, groupFolder) =>
       queue.registerProcess(groupJid, proc, containerName, groupFolder),
@@ -667,3 +983,8 @@ if (isDirectRun) {
     process.exit(1);
   });
 }
+
+
+
+
+

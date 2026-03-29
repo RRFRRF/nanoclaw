@@ -9,15 +9,12 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import pino from 'pino';
 
 import { MOUNT_ALLOWLIST_PATH } from './config.js';
+import { createLogger } from './logger.js';
 import { AdditionalMount, AllowedRoot, MountAllowlist } from './types.js';
 
-const logger = pino({
-  level: process.env.LOG_LEVEL || 'info',
-  transport: { target: 'pino-pretty', options: { colorize: true } },
-});
+const logger = createLogger();
 
 // Cache the allowlist in memory - only reloads on process restart
 let cachedAllowlist: MountAllowlist | null = null;
@@ -46,6 +43,37 @@ const DEFAULT_BLOCKED_PATTERNS = [
   '.secret',
 ];
 
+function normalizeAllowlist(allowlist: MountAllowlist): MountAllowlist {
+  if (!Array.isArray(allowlist.allowedRoots)) {
+    throw new Error('allowedRoots must be an array');
+  }
+
+  if (!Array.isArray(allowlist.blockedPatterns)) {
+    throw new Error('blockedPatterns must be an array');
+  }
+
+  if (typeof allowlist.nonMainReadOnly !== 'boolean') {
+    throw new Error('nonMainReadOnly must be a boolean');
+  }
+
+  return {
+    allowedRoots: allowlist.allowedRoots,
+    blockedPatterns: [
+      ...new Set([...DEFAULT_BLOCKED_PATTERNS, ...allowlist.blockedPatterns]),
+    ],
+    nonMainReadOnly: allowlist.nonMainReadOnly,
+  };
+}
+
+function readAllowlistFromDisk(): MountAllowlist | null {
+  if (!fs.existsSync(MOUNT_ALLOWLIST_PATH)) {
+    return null;
+  }
+
+  const content = fs.readFileSync(MOUNT_ALLOWLIST_PATH, 'utf-8');
+  return normalizeAllowlist(JSON.parse(content) as MountAllowlist);
+}
+
 /**
  * Load the mount allowlist from the external config location.
  * Returns null if the file doesn't exist or is invalid.
@@ -62,7 +90,8 @@ export function loadMountAllowlist(): MountAllowlist | null {
   }
 
   try {
-    if (!fs.existsSync(MOUNT_ALLOWLIST_PATH)) {
+    const allowlist = readAllowlistFromDisk();
+    if (allowlist === null) {
       allowlistLoadError = `Mount allowlist not found at ${MOUNT_ALLOWLIST_PATH}`;
       logger.warn(
         { path: MOUNT_ALLOWLIST_PATH },
@@ -71,28 +100,6 @@ export function loadMountAllowlist(): MountAllowlist | null {
       );
       return null;
     }
-
-    const content = fs.readFileSync(MOUNT_ALLOWLIST_PATH, 'utf-8');
-    const allowlist = JSON.parse(content) as MountAllowlist;
-
-    // Validate structure
-    if (!Array.isArray(allowlist.allowedRoots)) {
-      throw new Error('allowedRoots must be an array');
-    }
-
-    if (!Array.isArray(allowlist.blockedPatterns)) {
-      throw new Error('blockedPatterns must be an array');
-    }
-
-    if (typeof allowlist.nonMainReadOnly !== 'boolean') {
-      throw new Error('nonMainReadOnly must be a boolean');
-    }
-
-    // Merge with default blocked patterns
-    const mergedBlockedPatterns = [
-      ...new Set([...DEFAULT_BLOCKED_PATTERNS, ...allowlist.blockedPatterns]),
-    ];
-    allowlist.blockedPatterns = mergedBlockedPatterns;
 
     cachedAllowlist = allowlist;
     logger.info(
@@ -118,6 +125,11 @@ export function loadMountAllowlist(): MountAllowlist | null {
   }
 }
 
+export function invalidateMountAllowlistCache(): void {
+  cachedAllowlist = null;
+  allowlistLoadError = null;
+}
+
 /**
  * Expand ~ to home directory and resolve to absolute path
  */
@@ -130,6 +142,11 @@ function expandPath(p: string): string {
     return homeDir;
   }
   return path.resolve(p);
+}
+
+function pathCovers(rootPath: string, targetPath: string): boolean {
+  const relative = path.relative(rootPath, targetPath);
+  return !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
 /**
@@ -187,8 +204,7 @@ function findAllowedRoot(
     }
 
     // Check if realPath is under realRoot
-    const relative = path.relative(realRoot, realPath);
-    if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+    if (pathCovers(realRoot, realPath)) {
       return root;
     }
   }
@@ -224,6 +240,100 @@ export interface MountValidationResult {
   realHostPath?: string;
   resolvedContainerPath?: string;
   effectiveReadonly?: boolean;
+}
+
+export interface EnsureMountAllowlistResult {
+  configPath: string;
+  fileCreated: boolean;
+  addedRoots: string[];
+  updatedNonMainReadOnly: boolean;
+}
+
+export function ensureMountAllowlist(
+  requestedPaths: string[],
+  options?: { readWrite?: boolean },
+): EnsureMountAllowlistResult {
+  const uniquePaths = [...new Set(requestedPaths.map((p) => p.trim()).filter(Boolean))];
+  const readWrite = options?.readWrite === true;
+
+  if (uniquePaths.length === 0) {
+    return {
+      configPath: MOUNT_ALLOWLIST_PATH,
+      fileCreated: false,
+      addedRoots: [],
+      updatedNonMainReadOnly: false,
+    };
+  }
+
+  fs.mkdirSync(path.dirname(MOUNT_ALLOWLIST_PATH), { recursive: true });
+
+  let allowlist = readAllowlistFromDisk();
+  const fileCreated = allowlist === null;
+  if (allowlist === null) {
+    allowlist = {
+      allowedRoots: [],
+      blockedPatterns: [...DEFAULT_BLOCKED_PATTERNS],
+      nonMainReadOnly: true,
+    };
+  }
+
+  const addedRoots: string[] = [];
+
+  for (const requestedPath of uniquePaths) {
+    const expandedPath = expandPath(requestedPath);
+    if (!fs.existsSync(expandedPath)) {
+      throw new Error(`Mount path does not exist: "${requestedPath}"`);
+    }
+
+    const realPath = getRealPath(expandedPath);
+    if (realPath === null) {
+      throw new Error(`Mount path could not be resolved: "${requestedPath}"`);
+    }
+
+    const alreadyAllowed = allowlist.allowedRoots.some((root) => {
+      const realRoot =
+        getRealPath(expandPath(root.path)) || path.resolve(expandPath(root.path));
+      return pathCovers(realRoot, realPath) && (!readWrite || root.allowReadWrite);
+    });
+    if (alreadyAllowed) continue;
+
+    allowlist.allowedRoots.unshift({
+      path: realPath,
+      allowReadWrite: readWrite,
+      description: 'Added automatically from /new --mount',
+    });
+    addedRoots.push(realPath);
+  }
+
+  let updatedNonMainReadOnly = false;
+  if (readWrite && allowlist.nonMainReadOnly) {
+    allowlist.nonMainReadOnly = false;
+    updatedNonMainReadOnly = true;
+  }
+
+  if (fileCreated || addedRoots.length > 0 || updatedNonMainReadOnly) {
+    fs.writeFileSync(
+      MOUNT_ALLOWLIST_PATH,
+      JSON.stringify(allowlist, null, 2) + '\n',
+    );
+    invalidateMountAllowlistCache();
+    logger.info(
+      {
+        path: MOUNT_ALLOWLIST_PATH,
+        fileCreated,
+        addedRoots,
+        updatedNonMainReadOnly,
+      },
+      'Mount allowlist updated from terminal command',
+    );
+  }
+
+  return {
+    configPath: MOUNT_ALLOWLIST_PATH,
+    fileCreated,
+    addedRoots,
+    updatedNonMainReadOnly,
+  };
 }
 
 /**

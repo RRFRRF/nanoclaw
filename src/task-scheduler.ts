@@ -19,7 +19,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
-import { RegisteredGroup, ScheduledTask } from './types.js';
+import { RegisteredGroup, ScheduledTask, SessionState } from './types.js';
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -64,7 +64,8 @@ export function computeNextRun(task: ScheduledTask): string | null {
 
 export interface SchedulerDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
-  getSessions: () => Record<string, string>;
+  getSessions: () => Record<string, SessionState>;
+  upsertSession: (groupFolder: string, session: SessionState) => void;
   queue: GroupQueue;
   onProcess: (
     groupJid: string,
@@ -151,8 +152,10 @@ async function runTask(
 
   // For group context mode, use the group's current session
   const sessions = deps.getSessions();
-  const sessionId =
+  const session =
     task.context_mode === 'group' ? sessions[task.group_folder] : undefined;
+  const sessionId = session?.sessionId;
+  const resumeAt = session?.resumeAt || undefined;
 
   // After the task produces a result, close the container promptly.
   // Tasks are single-turn — no need to wait IDLE_TIMEOUT (30 min) for the
@@ -174,6 +177,7 @@ async function runTask(
       {
         prompt: task.prompt,
         sessionId,
+        resumeAt,
         groupFolder: task.group_folder,
         chatJid: task.chat_jid,
         isMain,
@@ -183,13 +187,23 @@ async function runTask(
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
+        if (streamedOutput.newSessionId) {
+          deps.upsertSession(task.group_folder, {
+            sessionId: streamedOutput.newSessionId,
+            resumeAt: streamedOutput.lastAssistantUuid || null,
+          });
+        }
         if (streamedOutput.result) {
           result = streamedOutput.result;
           // Forward result to user (sendMessage handles formatting)
           await deps.sendMessage(task.chat_jid, streamedOutput.result);
           scheduleClose();
         }
-        if (streamedOutput.status === 'success') {
+        if (
+          streamedOutput.status === 'success' &&
+          !streamedOutput.result &&
+          !streamedOutput.event
+        ) {
           deps.queue.notifyIdle(task.chat_jid);
           scheduleClose(); // Close promptly even when result is null (e.g. IPC-only tasks)
         }
@@ -200,6 +214,13 @@ async function runTask(
     );
 
     if (closeTimer) clearTimeout(closeTimer);
+
+    if (output.newSessionId) {
+      deps.upsertSession(task.group_folder, {
+        sessionId: output.newSessionId,
+        resumeAt: output.lastAssistantUuid || null,
+      });
+    }
 
     if (output.status === 'error') {
       error = output.error || 'Unknown error';

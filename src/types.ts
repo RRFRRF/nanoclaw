@@ -77,6 +77,17 @@ export interface TaskRunLog {
   error: string | null;
 }
 
+export interface SessionState {
+  sessionId: string;
+  resumeAt?: string | null;
+}
+
+export interface AgentStreamEvent {
+  type: 'assistant' | 'status';
+  text: string;
+  replace?: boolean;
+}
+
 // --- Channel abstraction ---
 
 export interface Channel {
@@ -88,6 +99,8 @@ export interface Channel {
   disconnect(): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
+  // Optional: structured agent stream events for rich terminal UIs.
+  sendAgentEvent?(jid: string, event: AgentStreamEvent): Promise<void>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
 }

@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git remote:*)",
+      "Bash(git push:*)",
+      "Bash(bash setup.sh)",
+      "Bash(npm install:*)",
+      "Bash(powershell -Command \"& 'C:\\\\Program Files \\(x86\\)\\\\Microsoft Visual Studio\\\\Installer\\\\vswhere.exe' -format json -all\" 2>&1)",
+      "Bash(ls:*)",
+      "Bash(npm config:*)",
+      "Bash(npx --yes better-sqlite3-prebuilt-install)",
+      "Bash(npm rebuild:*)",
+      "Bash(node -e \"require\\(''better-sqlite3''\\)\")",
+      "Bash(npx tsx:*)",
+      "Bash(powershell -Command \"Start-Process ''''C:\\\\Program Files\\\\Docker\\\\Docker\\\\Docker Desktop.exe''''\")",
+      "Bash(powershell -Command \"Start-Process ''C:\\\\Program Files\\\\Docker\\\\Docker\\\\Docker Desktop.exe''\")",
+      "Bash(docker info:*)",
+      "Bash(bash container/build.sh)",
+      "Bash(docker run:*)"
+    ]
+  }
+}

@@ -135,6 +135,7 @@ describe('container-runner timeout behavior', () => {
       status: 'success',
       result: 'Here is my response',
       newSessionId: 'session-123',
+      lastAssistantUuid: 'assistant-123',
     });
 
     // Let output processing settle
@@ -152,8 +153,12 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-123');
+    expect(result.lastAssistantUuid).toBe('assistant-123');
     expect(onOutput).toHaveBeenCalledWith(
-      expect.objectContaining({ result: 'Here is my response' }),
+      expect.objectContaining({
+        result: 'Here is my response',
+        lastAssistantUuid: 'assistant-123',
+      }),
     );
   });
 
@@ -194,6 +199,7 @@ describe('container-runner timeout behavior', () => {
       status: 'success',
       result: 'Done',
       newSessionId: 'session-456',
+      lastAssistantUuid: 'assistant-456',
     });
 
     await vi.advanceTimersByTimeAsync(10);
@@ -206,5 +212,6 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+    expect(result.lastAssistantUuid).toBe('assistant-456');
   });
 });

@@ -91,6 +91,42 @@ From the main channel (your self-chat), you can manage groups and tasks:
 @Andy join the Family Chat group
 ```
 
+## Terminal Mode
+
+If you want to use NanoClaw from the terminal instead of a chat app, run:
+
+```bash
+npm run build
+npm run terminal
+```
+
+Or during development:
+
+```bash
+npm run terminal:dev
+```
+
+This starts the normal NanoClaw service with a local terminal channel. Each
+local agent still runs in its own container; the terminal just becomes another
+front-end for creating agents, switching between them, and sending messages.
+
+Terminal commands:
+
+```text
+/new analyst
+/new repo-worker --mount /path/to/repo
+/new repo-editor --mount /path/to/repo --rw
+/agents
+/switch analyst
+/send repo-worker analyze this codebase
+/delete analyst
+```
+
+Notes:
+- `--mount <path>` attaches a host directory to that agent's container
+- `--rw` makes that mount read-write; otherwise it is read-only
+- Additional mounts still respect NanoClaw's external mount allowlist
+
 ## Customizing
 
 NanoClaw doesn't use configuration files. To make changes, just tell Claude Code what you want:

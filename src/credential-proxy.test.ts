@@ -189,4 +189,42 @@ describe('credential-proxy', () => {
     expect(res.statusCode).toBe(502);
     expect(res.body).toBe('Bad Gateway');
   });
+
+  it('retries once on transient upstream socket reset', async () => {
+    let requestCount = 0;
+    await new Promise<void>((r) => upstreamServer.close(() => r()));
+
+    upstreamServer = http.createServer((req, res) => {
+      requestCount += 1;
+      lastUpstreamHeaders = { ...req.headers };
+
+      if (requestCount === 1) {
+        req.socket.destroy();
+        return;
+      }
+
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, retried: true }));
+    });
+    await new Promise<void>((resolve) =>
+      upstreamServer.listen(0, '127.0.0.1', resolve),
+    );
+    upstreamPort = (upstreamServer.address() as AddressInfo).port;
+
+    proxyPort = await startProxy({ ANTHROPIC_API_KEY: 'sk-ant-real-key' });
+
+    const res = await makeRequest(
+      proxyPort,
+      {
+        method: 'POST',
+        path: '/v1/messages?beta=true',
+        headers: { 'content-type': 'application/json' },
+      },
+      '{}',
+    );
+
+    expect(requestCount).toBe(2);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('"retried":true');
+  });
 });

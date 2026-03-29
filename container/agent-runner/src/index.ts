@@ -22,6 +22,7 @@ import { fileURLToPath } from 'url';
 interface ContainerInput {
   prompt: string;
   sessionId?: string;
+  resumeAt?: string;
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
@@ -33,6 +34,12 @@ interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
   newSessionId?: string;
+  lastAssistantUuid?: string;
+  event?: {
+    type: 'assistant' | 'status';
+    text: string;
+    replace?: boolean;
+  };
   error?: string;
 }
 
@@ -202,6 +209,11 @@ interface ParsedMessage {
   content: string;
 }
 
+interface ContentBlockLike {
+  type?: string;
+  text?: string;
+}
+
 function parseTranscript(content: string): ParsedMessage[] {
   const messages: ParsedMessage[] = [];
 
@@ -226,6 +238,61 @@ function parseTranscript(content: string): ParsedMessage[] {
   }
 
   return messages;
+}
+
+function extractTextContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter(
+      (block): block is ContentBlockLike =>
+        typeof block === 'object' && block !== null,
+    )
+    .filter((block) => block.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text || '')
+    .join('');
+}
+
+function extractAssistantText(message: unknown): string {
+  if (typeof message !== 'object' || message === null) return '';
+  const msg = message as { message?: { content?: unknown } };
+  return extractTextContent(msg.message?.content).trim();
+}
+
+function formatTaskStatus(message: unknown): string | null {
+  if (typeof message !== 'object' || message === null) return null;
+
+  const payload = message as {
+    subtype?: string;
+    status?: string;
+    summary?: string;
+    message?: string | { content?: unknown };
+    task_id?: string;
+  };
+
+  const parts: string[] = [];
+
+  if (typeof payload.summary === 'string' && payload.summary.trim()) {
+    parts.push(payload.summary.trim());
+  }
+
+  if (typeof payload.message === 'string' && payload.message.trim()) {
+    parts.push(payload.message.trim());
+  } else {
+    const nestedText = extractTextContent(payload.message?.content).trim();
+    if (nestedText) parts.push(nestedText);
+  }
+
+  if (typeof payload.status === 'string' && payload.status.trim()) {
+    parts.push(`status=${payload.status.trim()}`);
+  }
+
+  if (parts.length === 0 && typeof payload.subtype === 'string') {
+    parts.push(payload.subtype.replace(/_/g, ' '));
+  }
+
+  if (parts.length === 0) return null;
+  return parts.join(' | ');
 }
 
 function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | null, assistantName?: string): string {
@@ -363,6 +430,8 @@ async function runQuery(
 
   let newSessionId: string | undefined;
   let lastAssistantUuid: string | undefined;
+  let lastAssistantText = '';
+  let lastTaskStatus = '';
   let messageCount = 0;
   let resultCount = 0;
 
@@ -435,6 +504,21 @@ async function runQuery(
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
+      const assistantText = extractAssistantText(message);
+      if (assistantText && assistantText !== lastAssistantText) {
+        lastAssistantText = assistantText;
+        writeOutput({
+          status: 'success',
+          result: null,
+          newSessionId,
+          lastAssistantUuid,
+          event: {
+            type: 'assistant',
+            text: assistantText,
+            replace: true,
+          },
+        });
+      }
     }
 
     if (message.type === 'system' && message.subtype === 'init') {
@@ -447,6 +531,28 @@ async function runQuery(
       log(`Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`);
     }
 
+    if (
+      message.type === 'system' &&
+      ((message as { subtype?: string }).subtype === 'task_started' ||
+        (message as { subtype?: string }).subtype === 'task_progress' ||
+        (message as { subtype?: string }).subtype === 'task_notification')
+    ) {
+      const statusText = formatTaskStatus(message);
+      if (statusText && statusText !== lastTaskStatus) {
+        lastTaskStatus = statusText;
+        writeOutput({
+          status: 'success',
+          result: null,
+          newSessionId,
+          lastAssistantUuid,
+          event: {
+            type: 'status',
+            text: statusText,
+          },
+        });
+      }
+    }
+
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
@@ -454,7 +560,8 @@ async function runQuery(
       writeOutput({
         status: 'success',
         result: textResult || null,
-        newSessionId
+        newSessionId,
+        lastAssistantUuid,
       });
     }
   }
@@ -506,7 +613,7 @@ async function main(): Promise<void> {
   }
 
   // Query loop: run query → wait for IPC message → run new query → repeat
-  let resumeAt: string | undefined;
+  let resumeAt: string | undefined = containerInput.resumeAt;
   try {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
@@ -528,7 +635,12 @@ async function main(): Promise<void> {
       }
 
       // Emit session update so host can track it
-      writeOutput({ status: 'success', result: null, newSessionId: sessionId });
+      writeOutput({
+        status: 'success',
+        result: null,
+        newSessionId: sessionId,
+        lastAssistantUuid: resumeAt,
+      });
 
       log('Query ended, waiting for next IPC message...');
 
@@ -549,6 +661,7 @@ async function main(): Promise<void> {
       status: 'error',
       result: null,
       newSessionId: sessionId,
+      lastAssistantUuid: resumeAt,
       error: errorMessage
     });
     process.exit(1);

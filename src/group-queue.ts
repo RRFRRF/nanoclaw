@@ -27,6 +27,15 @@ interface GroupState {
   retryCount: number;
 }
 
+export interface GroupRuntimeStatus {
+  active: boolean;
+  idleWaiting: boolean;
+  isTaskContainer: boolean;
+  runningTaskId: string | null;
+  containerName: string | null;
+  groupFolder: string | null;
+}
+
 export class GroupQueue {
   private groups = new Map<string, GroupState>();
   private activeCount = 0;
@@ -191,6 +200,22 @@ export class GroupQueue {
     } catch {
       // ignore
     }
+  }
+
+  isGroupActive(groupJid: string): boolean {
+    return this.getGroup(groupJid).active;
+  }
+
+  getGroupRuntimeStatus(groupJid: string): GroupRuntimeStatus {
+    const state = this.getGroup(groupJid);
+    return {
+      active: state.active,
+      idleWaiting: state.idleWaiting,
+      isTaskContainer: state.isTaskContainer,
+      runningTaskId: state.runningTaskId,
+      containerName: state.containerName,
+      groupFolder: state.groupFolder,
+    };
   }
 
   private async runForGroup(
