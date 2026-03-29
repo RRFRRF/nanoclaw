@@ -15,6 +15,7 @@
     "terminal:logs:dev": "tsx src/index.ts --terminal --terminal-log-view ink --terminal-log-level trace",
     "terminal:user:dev": "tsx src/index.ts --terminal --terminal-log-level error",
     "typecheck": "tsc --noEmit",
+    "test:core": "vitest run src/container-runner.test.ts src/group-queue.test.ts src/task-scheduler.test.ts src/terminal-channel.test.ts src/credential-proxy.test.ts src/db.test.ts",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:fix": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
@@ -24,6 +25,8 @@
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "test": "vitest run",
+    "verify:affected": "node scripts/verify-affected.mjs",
+    "verify:core": "node scripts/verify-core.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {

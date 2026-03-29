@@ -88,6 +88,10 @@ export interface AgentStreamEvent {
   replace?: boolean;
 }
 
+export interface ContainerLifecycleState {
+  queryCompleted?: boolean;
+}
+
 // --- Channel abstraction ---
 
 export interface Channel {

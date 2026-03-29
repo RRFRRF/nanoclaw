@@ -202,7 +202,8 @@ async function runTask(
         if (
           streamedOutput.status === 'success' &&
           !streamedOutput.result &&
-          !streamedOutput.event
+          !streamedOutput.event &&
+          streamedOutput.queryCompleted
         ) {
           deps.queue.notifyIdle(task.chat_jid);
           scheduleClose(); // Close promptly even when result is null (e.g. IPC-only tasks)

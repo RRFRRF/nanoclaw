@@ -54,6 +54,7 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   lastAssistantUuid?: string;
+  queryCompleted?: boolean;
   event?: {
     type: 'assistant' | 'status';
     text: string;
@@ -162,6 +163,7 @@ function buildVolumeMounts(
   const skillsSrc = path.join(process.cwd(), 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
   if (fs.existsSync(skillsSrc)) {
+    fs.rmSync(skillsDst, { recursive: true, force: true });
     for (const skillDir of fs.readdirSync(skillsSrc)) {
       const srcDir = path.join(skillsSrc, skillDir);
       if (!fs.statSync(srcDir).isDirectory()) continue;

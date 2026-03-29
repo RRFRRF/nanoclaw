@@ -8,6 +8,11 @@ const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
 // Mock config
 vi.mock('./config.js', () => ({
+  ANTHROPIC_DEFAULT_HAIKU_MODEL: undefined,
+  ANTHROPIC_DEFAULT_OPUS_MODEL: undefined,
+  ANTHROPIC_DEFAULT_SONNET_MODEL: undefined,
+  ANTHROPIC_MODEL: undefined,
+  CLAUDE_CODE_SUBAGENT_MODEL: undefined,
   CONTAINER_IMAGE: 'nanoclaw-agent:latest',
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
   CONTAINER_TIMEOUT: 1800000, // 30min
@@ -213,5 +218,34 @@ describe('container-runner timeout behavior', () => {
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
     expect(result.lastAssistantUuid).toBe('assistant-456');
+  });
+
+  it('passes query completion markers through streaming callbacks', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: null,
+      newSessionId: 'session-789',
+      queryCompleted: true,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await resultPromise;
+    expect(onOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queryCompleted: true,
+        newSessionId: 'session-789',
+      }),
+    );
   });
 });

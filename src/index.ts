@@ -482,15 +482,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
-  let outputSentToUser = false;
+  let streamedOutputSent = false;
+  let finalOutputSent = false;
+  let queryCompleted = false;
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     if (result.event) {
       await channel.sendAgentEvent?.(chatJid, result.event);
       if (result.event.type === 'assistant') {
-        outputSentToUser = true;
-        resetIdleTimer();
+        streamedOutputSent = true;
       }
+      resetIdleTimer();
     }
 
     if (result.result) {
@@ -503,14 +505,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
       if (text) {
         await channel.sendMessage(chatJid, text);
-        outputSentToUser = true;
+        finalOutputSent = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
     }
 
-    if (result.status === 'success' && !result.result && !result.event) {
+    if (result.queryCompleted) {
+      queryCompleted = true;
+      finalOutputSent = finalOutputSent || streamedOutputSent;
       queue.notifyIdle(chatJid);
+      resetIdleTimer();
     }
 
     if (result.status === 'error') {
@@ -522,12 +527,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
-    // If we already sent output to the user, don't roll back the cursor �?
-    // the user got their response and re-processing would send duplicates.
-    if (outputSentToUser) {
+    // Partial streaming output is not enough to treat the turn as completed.
+    // Only preserve the advanced cursor after the query actually completed
+    // or a final message/result was delivered to the user.
+    if (finalOutputSent || queryCompleted) {
       logger.warn(
         { group: group.name },
-        'Agent error after output was sent, skipping cursor rollback to prevent duplicates',
+        'Agent error after completed output, skipping cursor rollback to prevent duplicates',
       );
       return true;
     }

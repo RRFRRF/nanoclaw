@@ -35,6 +35,7 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   lastAssistantUuid?: string;
+  queryCompleted?: boolean;
   event?: {
     type: 'assistant' | 'status';
     text: string;
@@ -209,6 +210,16 @@ interface ParsedMessage {
   content: string;
 }
 
+interface QueryRunResult {
+  newSessionId?: string;
+  lastAssistantUuid?: string;
+  closedDuringQuery: boolean;
+  lastAssistantText: string;
+  lastResultText: string | null;
+  lastResultSubtype?: string;
+  sawStatusEvent: boolean;
+}
+
 interface ContentBlockLike {
   type?: string;
   text?: string;
@@ -342,6 +353,76 @@ function formatTaskStatus(message: unknown): string | null {
   return parts.join(' | ');
 }
 
+function stripStructuredAssistantContent(text: string): string {
+  return text
+    .replace(/<thinking>[\s\S]*?<\/thinking>/g, ' ')
+    .replace(/<tool_use\b[^>]*>[\s\S]*?<\/tool_use>/g, ' ')
+    .replace(/<tool_use\b[^>]*\/>/g, ' ')
+    .replace(/<internal>[\s\S]*?<\/internal>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function looksLikeDelegationEnvelope(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  return (
+    /^```json action\b/i.test(trimmed) ||
+    /"tool"\s*:\s*"Agent"/i.test(trimmed) ||
+    /"subagent_type"\s*:/i.test(trimmed)
+  );
+}
+
+function looksLikePlanningContinuation(text: string): boolean {
+  if (!text.trim()) return false;
+  return /(?:\blet me\b|\bi(?:'ll| will)\b|\bstart(?:ing)?\b|\bbegin(?:ning)?\b|\bfirst\b|\bnext\b|接下来|我先|我将|让我|开始|先去|先来|先进行|下一步)/i.test(
+    text,
+  );
+}
+
+function getAutoContinueReason(
+  queryResult: QueryRunResult,
+  isScheduledTask: boolean,
+  autoContinueCount: number,
+): string | null {
+  const MAX_AUTO_CONTINUES = 6;
+  if (isScheduledTask) return null;
+  if (queryResult.closedDuringQuery) return null;
+  if (
+    queryResult.lastResultSubtype &&
+    queryResult.lastResultSubtype !== 'success'
+  ) {
+    return null;
+  }
+  if (autoContinueCount >= MAX_AUTO_CONTINUES) return null;
+
+  const assistantText = queryResult.lastAssistantText.trim();
+  const assistantPlain = stripStructuredAssistantContent(assistantText);
+  const resultText = queryResult.lastResultText?.trim() || '';
+  const hasStructuredOnly =
+    !!assistantText && !assistantPlain && assistantText !== assistantPlain;
+
+  if (
+    looksLikeDelegationEnvelope(resultText) ||
+    looksLikeDelegationEnvelope(assistantText)
+  ) {
+    return 'delegation envelope emitted without execution';
+  }
+
+  if (!resultText && queryResult.sawStatusEvent) {
+    return 'task status emitted without a final result';
+  }
+
+  if (
+    !resultText &&
+    (hasStructuredOnly || looksLikePlanningContinuation(assistantPlain))
+  ) {
+    return 'planning output emitted without a final result';
+  }
+
+  return null;
+}
+
 function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | null, assistantName?: string): string {
   const now = new Date();
   const formatDateTime = (d: Date) => d.toLocaleString('en-US', {
@@ -450,7 +531,7 @@ async function runQuery(
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
-): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
+): Promise<QueryRunResult> {
   const stream = new MessageStream();
   stream.push(prompt);
 
@@ -478,9 +559,12 @@ async function runQuery(
   let newSessionId: string | undefined;
   let lastAssistantUuid: string | undefined;
   let lastAssistantText = '';
+  let lastResultText: string | null = null;
+  let lastResultSubtype: string | undefined;
   let lastTaskStatus = '';
   let messageCount = 0;
   let resultCount = 0;
+  let sawStatusEvent = false;
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
@@ -587,6 +671,7 @@ async function runQuery(
       const statusText = formatTaskStatus(message);
       if (statusText && statusText !== lastTaskStatus) {
         lastTaskStatus = statusText;
+        sawStatusEvent = true;
         writeOutput({
           status: 'success',
           result: null,
@@ -603,6 +688,8 @@ async function runQuery(
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
+      lastResultText = typeof textResult === 'string' ? textResult : null;
+      lastResultSubtype = message.subtype;
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
       writeOutput({
         status: 'success',
@@ -615,7 +702,15 @@ async function runQuery(
 
   ipcPolling = false;
   log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
-  return { newSessionId, lastAssistantUuid, closedDuringQuery };
+  return {
+    newSessionId,
+    lastAssistantUuid,
+    closedDuringQuery,
+    lastAssistantText,
+    lastResultText,
+    lastResultSubtype,
+    sawStatusEvent,
+  };
 }
 
 async function main(): Promise<void> {
@@ -661,6 +756,7 @@ async function main(): Promise<void> {
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined = containerInput.resumeAt;
+  let autoContinueCount = 0;
   try {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
@@ -681,12 +777,39 @@ async function main(): Promise<void> {
         break;
       }
 
+      const autoContinueReason = getAutoContinueReason(
+        queryResult,
+        containerInput.isScheduledTask === true,
+        autoContinueCount,
+      );
+      if (autoContinueReason) {
+        autoContinueCount += 1;
+        log(
+          `Query appears unfinished, auto-continuing (#${autoContinueCount}): ${autoContinueReason}`,
+        );
+        writeOutput({
+          status: 'success',
+          result: null,
+          newSessionId: sessionId,
+          lastAssistantUuid: resumeAt,
+          event: {
+            type: 'status',
+            text: `Auto-continuing: ${autoContinueReason}`,
+          },
+        });
+        prompt =
+          'Continue automatically. Do not stop at planning, intent descriptions, or delegation envelopes. Execute the next concrete step now and keep going until the task is actually finished or you need external input that only the user can provide. If the task is already finished, return the final result now.';
+        continue;
+      }
+      autoContinueCount = 0;
+
       // Emit session update so host can track it
       writeOutput({
         status: 'success',
         result: null,
         newSessionId: sessionId,
         lastAssistantUuid: resumeAt,
+        queryCompleted: true,
       });
 
       log('Query ended, waiting for next IPC message...');
@@ -700,6 +823,7 @@ async function main(): Promise<void> {
 
       log(`Got new message (${nextMessage.length} chars), starting new query`);
       prompt = nextMessage;
+      autoContinueCount = 0;
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
