@@ -206,6 +206,36 @@ function clearSessionState(groupFolder: string): void {
 function isMissingConversationError(error?: string): boolean {
   return !!error && /No conversation found with session ID/i.test(error);
 }
+
+function isMissingResumePointError(error?: string): boolean {
+  return !!error && /No message found with message\.uuid/i.test(error);
+}
+
+function persistSessionFromOutput(
+  groupFolder: string,
+  output: ContainerOutput,
+  fallbackSessionId?: string,
+): void {
+  const nextSessionId = output.newSessionId || fallbackSessionId;
+  if (!nextSessionId) return;
+
+  if (isMissingConversationError(output.error)) {
+    return;
+  }
+
+  if (isMissingResumePointError(output.error)) {
+    upsertSessionState(groupFolder, {
+      sessionId: nextSessionId,
+      resumeAt: null,
+    });
+    return;
+  }
+
+  upsertSessionState(groupFolder, {
+    sessionId: nextSessionId,
+    resumeAt: output.lastAssistantUuid,
+  });
+}
 function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
@@ -590,12 +620,7 @@ async function runAgent(
   // Wrap onOutput to track session ID from streamed results
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
-        if (output.newSessionId && !isMissingConversationError(output.error)) {
-          upsertSessionState(group.folder, {
-            sessionId: output.newSessionId,
-            resumeAt: output.lastAssistantUuid,
-          });
-        }
+        persistSessionFromOutput(group.folder, output, sessionId);
         await onOutput(output);
       }
     : undefined;
@@ -617,12 +642,7 @@ async function runAgent(
       wrappedOnOutput,
     );
 
-    if (output.newSessionId && !isMissingConversationError(output.error)) {
-      upsertSessionState(group.folder, {
-        sessionId: output.newSessionId,
-        resumeAt: output.lastAssistantUuid,
-      });
-    }
+    persistSessionFromOutput(group.folder, output, sessionId);
 
     if (output.status === 'error') {
       if (
@@ -635,6 +655,23 @@ async function runAgent(
           'Stored session is no longer valid, clearing it and retrying once',
         );
         clearSessionState(group.folder);
+        return runAgent(group, prompt, chatJid, onOutput, false);
+      }
+
+      if (
+        retryOnInvalidSession &&
+        sessionId &&
+        resumeAt &&
+        isMissingResumePointError(output.error)
+      ) {
+        logger.warn(
+          { group: group.name, sessionId, resumeAt, error: output.error },
+          'Stored resume cursor is no longer valid, clearing it and retrying once',
+        );
+        upsertSessionState(group.folder, {
+          sessionId: output.newSessionId || sessionId,
+          resumeAt: null,
+        });
         return runAgent(group, prompt, chatJid, onOutput, false);
       }
 

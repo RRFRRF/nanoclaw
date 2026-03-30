@@ -353,6 +353,14 @@ function formatTaskStatus(message: unknown): string | null {
   return parts.join(' | ');
 }
 
+function isMissingConversationError(error?: string): boolean {
+  return !!error && /No conversation found with session ID/i.test(error);
+}
+
+function isMissingResumePointError(error?: string): boolean {
+  return !!error && /No message found with message\.uuid/i.test(error);
+}
+
 function stripStructuredAssistantContent(text: string): string {
   return text
     .replace(/<thinking>[\s\S]*?<\/thinking>/g, ' ')
@@ -760,8 +768,60 @@ async function main(): Promise<void> {
   try {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
+      let queryResult: QueryRunResult;
+      try {
+        queryResult = await runQuery(
+          prompt,
+          sessionId,
+          mcpServerPath,
+          containerInput,
+          sdkEnv,
+          resumeAt,
+        );
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+        if (sessionId && isMissingConversationError(errorMessage)) {
+          log(
+            `Stored session is no longer valid inside container, clearing session and retrying once: ${sessionId}`,
+          );
+          writeOutput({
+            status: 'success',
+            result: null,
+            newSessionId: sessionId,
+            lastAssistantUuid: resumeAt,
+            event: {
+              type: 'status',
+              text: 'Stored session is invalid. Retrying with a fresh session.',
+            },
+          });
+          sessionId = undefined;
+          resumeAt = undefined;
+          autoContinueCount = 0;
+          continue;
+        }
+
+        if (sessionId && resumeAt && isMissingResumePointError(errorMessage)) {
+          log(
+            `Stored resume cursor is no longer valid inside container, clearing resumeAt and retrying once: ${resumeAt}`,
+          );
+          writeOutput({
+            status: 'success',
+            result: null,
+            newSessionId: sessionId,
+            lastAssistantUuid: resumeAt,
+            event: {
+              type: 'status',
+              text: 'Stored resume cursor is invalid. Retrying from the latest session state.',
+            },
+          });
+          resumeAt = undefined;
+          autoContinueCount = 0;
+          continue;
+        }
+
+        throw err;
+      }
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }
