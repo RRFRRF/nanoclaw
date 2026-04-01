@@ -128,7 +128,10 @@ describe('container-runner provider env injection', () => {
   });
 
   it('injects anthropic proxy env when provider is anthropic', async () => {
-    const { mod, fakeProc, spawnMock } = await loadRunner('anthropic', 'api-key');
+    const { mod, fakeProc, spawnMock } = await loadRunner(
+      'anthropic',
+      'api-key',
+    );
 
     const promise = mod.runContainerAgent(
       {
@@ -188,9 +191,7 @@ describe('container-runner provider env injection', () => {
     const args = getSpawnArgs(spawnMock);
     expect(args).toContain('MODEL_PROVIDER=openai');
     expect(args).toContain('MODEL_API_FORMAT=openai-responses');
-    expect(args).toContain(
-      'OPENAI_BASE_URL=http://host.docker.internal:3001',
-    );
+    expect(args).toContain('OPENAI_BASE_URL=http://host.docker.internal:3001');
     expect(args).toContain('OPENAI_API_KEY=placeholder');
     expect(args).not.toContain(
       'ANTHROPIC_BASE_URL=http://host.docker.internal:3001',

@@ -97,9 +97,11 @@ function formatRuntimeError(err: unknown): string {
         ? maybeErr.stdout.toString('utf8')
         : '';
 
-  return [stderr, stdout, maybeErr.message]
-    .map((part) => part.trim())
-    .find((part) => part.length > 0) || 'unknown runtime error';
+  return (
+    [stderr, stdout, maybeErr.message]
+      .map((part) => part.trim())
+      .find((part) => part.length > 0) || 'unknown runtime error'
+  );
 }
 
 /** Ensure the container runtime is running. */

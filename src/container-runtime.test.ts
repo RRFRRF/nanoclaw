@@ -55,12 +55,16 @@ describe('ensureContainerRuntimeRunning', () => {
     ensureContainerRuntimeRunning();
 
     expect(mockExecFileSync).toHaveBeenCalledTimes(1);
-    expect(mockExecFileSync).toHaveBeenCalledWith(CONTAINER_RUNTIME_BIN, ['info'], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      encoding: 'utf8',
-      timeout: 30000,
-      windowsHide: true,
-    });
+    expect(mockExecFileSync).toHaveBeenCalledWith(
+      CONTAINER_RUNTIME_BIN,
+      ['info'],
+      {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        encoding: 'utf8',
+        timeout: 30000,
+        windowsHide: true,
+      },
+    );
     expect(logger.debug).toHaveBeenCalledWith(
       'Container runtime already running',
     );
@@ -68,7 +72,9 @@ describe('ensureContainerRuntimeRunning', () => {
 
   it('throws when docker info fails', () => {
     mockExecFileSync.mockImplementationOnce(() => {
-      const error = new Error('Cannot connect to the Docker daemon') as Error & {
+      const error = new Error(
+        'Cannot connect to the Docker daemon',
+      ) as Error & {
         stderr?: Buffer;
       };
       error.stderr = Buffer.from('permission denied while trying to connect');

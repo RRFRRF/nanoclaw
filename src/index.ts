@@ -709,7 +709,13 @@ async function runAgent(
         ) {
           const delayMs = AGENT_RETRY_BASE_MS * Math.pow(2, attempt - 1);
           logger.warn(
-            { group: group.name, attempt, maxAttempts, delayMs, error: output.error },
+            {
+              group: group.name,
+              attempt,
+              maxAttempts,
+              delayMs,
+              error: output.error,
+            },
             'Container turn hit a transient provider error, retrying',
           );
           await wait(delayMs);

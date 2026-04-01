@@ -6,9 +6,8 @@ const schedulerMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('./config.js', async () => {
-  const actual = await vi.importActual<typeof import('./config.js')>(
-    './config.js',
-  );
+  const actual =
+    await vi.importActual<typeof import('./config.js')>('./config.js');
   return {
     ...actual,
     ASSISTANT_NAME: 'Andy',
