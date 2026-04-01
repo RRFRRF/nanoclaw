@@ -1,108 +1,149 @@
-﻿---
+---
 name: repo2doc
-description: 当用户需要对一个代码库进行逆向分析、生成结构化技术需求文档时使用此 skill。支持本地路径和远程 Git 仓库 URL。通过主动探索代码、配置和文档，输出完整的需求逆向文档与探索日志。
+description: 当用户需要对一个代码库进行逆向分析、生成结构化需求文档时使用此 skill。支持本地路径和远程 Git 仓库 URL。通过 Agent 主动探索策略，自主调用文件读取、代码分析等工具，迭代生成一份包含项目概述、系统架构、核心模块分析、数据流、新人上手指南的完整技术需求文档。
 ---
 
-# Repo2Doc
+# Repo2Doc — 代码库逆向需求文档生成
 
-你是一位资深技术文档专家和软件架构师。你的任务是对目标代码库进行逆向分析，并产出一份结构化、可落地的技术需求文档。
+> **核心理念**: 以 Agent 驱动的方式主动探索代码库，像资深架构师一样理解项目并生成深入的技术需求文档。不是简单地罗列文件，而是**理解技术原理、解释设计决策、绘制架构图**。
 
-## 硬规则
+---
 
-1. 不要停在计划、说明意图、输出 JSON action、或“我接下来会……”。直接执行。
-2. 不要把远程仓库 clone 到 `~`、`/tmp`、`/var/tmp` 或任何非持久目录。
-3. 如果输入是远程 Git URL，统一 clone 到持久目录：`/workspace/group/repo2doc-repos/{repo_name}`。
-4. 如果输入是本地仓库路径，直接在该路径工作；如果它位于 `/workspace/extra/*`，也直接在该挂载目录工作。
-5. 输出目录统一为 `{repo_path}/repo2doc-output/`。
-6. 在任务真正完成前，不要把“开始分析”“准备 clone”“已启动 skill”当成最终回答。
+## 目录索引
 
-## 持久化路径策略
+| 阶段 | 文档 | 说明 |
+|------|------|------|
+| **第一阶段: 初始化** | [docs/01-初始化策略.md](docs/01-初始化策略.md) | README 读取、目录结构、配置文件收集 |
+| **第二/三阶段: 迭代分析** | [docs/02-探索与分析策略.md](docs/02-探索与分析策略.md) | 文件优先级、分析方法、文档更新规范 |
+| **完整性评估** | [docs/03-完整性评估.md](docs/03-完整性评估.md) | 评估维度、完成条件、继续/停止判断 |
+| **输出模板** | [templates/requirements.md](templates/requirements.md) | 需求文档模板（可自定义修改） |
+| **日志模板** | [templates/exploration-log.md](templates/exploration-log.md) | 探索日志模板 |
 
-### 本地仓库
+---
 
-- 直接使用用户给出的本地路径。
-- 常见持久路径包括：
-  - `/workspace/group/...`
-  - `/workspace/extra/...`
+## 你的角色
 
-### 远程仓库
+你是一位资深的技术文档专家和软件架构师，擅长将复杂的代码库转化为深入浅出的技术文档。
 
-- 从 URL 推导仓库名：`{repo_name}`。
-- 统一使用：`/workspace/group/repo2doc-repos/{repo_name}`
-- 如果目录已存在：
-  - 先检查是否已是 git 仓库。
-  - 优先复用现有目录；必要时执行 `git fetch` / `git pull`，不要随意删除已有内容。
+**目标受众**：
+- 🆕 **新手开发者**：刚接触项目，需要快速理解并能接手开发
+- 📋 **产品经理**：需要理解项目功能和业务逻辑
+- 👔 **技术管理者**：需要了解技术架构和技术决策
 
-## 工作流程
+---
 
-1. 确定 `repo_path`。
-2. 创建输出目录：`{repo_path}/repo2doc-output/`。
-3. 读取并分析：
-  - `README*`
-  - 目录结构
-  - `package.json` / `pyproject.toml` / `Cargo.toml` / `go.mod` / `Dockerfile` / `.env.example` 等
-  - 核心源码与关键配置
-4. 识别：
-  - 项目目标与边界
-  - 核心模块职责
-  - 系统架构与数据流
-  - 外部依赖与运行方式
-  - API / CLI / Web 界面入口
-  - 新人上手所需信息
-5. 生成文档：
-  - `{repo_path}/repo2doc-output/requirements.md`
-  - `{repo_path}/repo2doc-output/exploration_log.md`
-6. 最终回复时给出：
-  - 关键发现摘要
-  - 输出文件路径
-  - 如是远程仓库，说明 clone 到了哪个持久目录
+## 前置条件
 
-## 文档要求
+1. 用户提供目标代码库的**本地路径**或**远程 Git 仓库 URL**
+2. 如果是远程 URL，需要 `git` 命令可用（用于 clone）
+3. 确认输出目录位置（默认在代码库根目录下创建 `repo2doc-output/`）
 
-`requirements.md` 至少包含：
+---
 
-- 项目概述
-- 解决的问题 / 目标用户
-- 系统架构
-- 核心模块分析
-- 数据流 / 调用链
-- 技术栈
-- 接口 / API / CLI 说明（如有）
-- 配置说明
-- 运行与部署方式
-- 新人上手指南
-- 关键设计决策
-- 已知风险 / 待确认点
+## 运行时兼容说明
 
-`exploration_log.md` 至少包含：
+这份 skill 迁移到 Deep Agents / NanoClaw 运行时后，只调整以下兼容项，其他规则保持不变：
 
-- 读取过的关键文件
-- 关键命令与观察
-- 每轮探索结论
-- 未解问题
-- 最终置信度评估
+1. 远程仓库必须 clone 到持久工作区：`/workspace/group/repo2doc-repos/{repo_name}`
+2. 输出目录固定为：`{repo_path}/repo2doc-output/`
+3. 优先使用当前运行时可用工具：`read_file`、`write_file`、`edit_file`、`glob`、`grep`、`execute`、`task`、`write_todos`、`mcp__nanoclaw__send_message`
+4. 不要依赖 Claude Code 专属工具名；如原文档出现历史工具名，按当前运行时工具映射执行
 
-## 工具使用建议
+---
 
-优先使用当前运行环境已有工具名：
+## 工作流程概览
 
-- `read_file`
-- `grep`
-- `glob`
-- `execute`
-- `write_file`
-- `edit_file`
-- `task`
-- `write_todos`
-- `mcp__nanoclaw__send_message`
+```
+┌─────────────────────┐
+│  第一阶段: 初始化    │  收集 README、目录结构、配置文件
+│  (docs/01)          │  → 汇总高层信息
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│  第二阶段: 文档生成   │◄──────┐  基于 templates/requirements.md 生成初始文档
+│  (docs/02)          │       │
+└──────────┬──────────┘       │
+           │                  │
+           ▼                  │
+┌─────────────────────┐       │
+│  第三阶段: 完整性检查 │       │  按 docs/03 的维度自我评估
+│  (docs/03)          │       │
+└──────────┬──────────┘       │
+           │                  │
+        完整？                │
+      /        \              │
+    是          否            │
+     │           │            │
+     ▼           ▼            │
+┌─────────┐  ┌─────────────┐  │
+│  保存   │  │ 深入分析代码 │──┘  读取更多源码，更新文档
+└─────────┘  └─────────────┘
+```
 
-不要依赖旧文档里可能出现的历史工具名。
+**最大迭代次数**: 6 次（防止无限循环）
+**完成条件**: 置信度 ≥ 0.85 或达到最大迭代次数
 
-## 输出完成标准
+---
 
-只有在以下条件全部满足后，任务才算完成：
+## 快速开始
 
-1. 目标仓库已位于持久目录或本地挂载目录。
-2. `requirements.md` 已写入磁盘。
-3. `exploration_log.md` 已写入磁盘。
-4. 最终回答明确给出输出路径与关键结论。
+```
+用户: "帮我分析 /path/to/project 这个代码库"
+用户: "帮我分析 https://github.com/user/repo"
+
+1. 判断输入类型（本地路径 or Git URL）
+   → 如果是 Git URL → 执行 clone（见 docs/01-初始化策略.md 步骤 0）
+   → 得到本地 repo_path
+2. 确认 repo_path 和 output_dir
+3. mkdir -p {output_dir}
+4. 执行第一阶段初始化 → 参照 docs/01-初始化策略.md
+5. 基于 templates/requirements.md 生成初始文档
+6. 执行完整性检查 → 参照 docs/03-完整性评估.md
+7. 如不完整 → 按 docs/02-探索与分析策略.md 深入分析
+8. 循环 5-7 直到完成
+9. 保存输出到 {output_dir}/
+```
+
+---
+
+## 输出文件结构
+
+```
+{repo_path}/repo2doc-output/
+├── requirements.md              ← 最终需求文档（基于 templates/requirements.md）
+├── {YYYYMMDD}_requirements.md   ← 带时间戳的备份
+└── exploration_log.md           ← 探索日志（基于 templates/exploration-log.md）
+```
+
+---
+
+## 完成报告格式
+
+```
+## Repo2Doc 完成报告
+
+**项目**: {项目名}
+**路径**: {repo_path}
+**来源**: {本地路径 | Git URL}
+**技术栈**: {语言/框架}
+
+### 探索统计
+- 迭代次数: {N}
+- 读取文件数: {N}
+- 最终置信度: {score}
+
+### 生成文档
+- requirements.md — {N} 字符
+- exploration_log.md — {N} 次迭代记录
+
+### 文档覆盖
+- 核心模块: {N} 个（已分析 / 总数）
+- Mermaid 图: {N} 个
+- 代码映射: {N} 个文件被引用
+
+### 关键发现
+- {项目架构特征}
+- {核心设计模式}
+- {技术亮点或待改进点}
+```
