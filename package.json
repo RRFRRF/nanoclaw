@@ -1,7 +1,7 @@
 {
-  "name": "nanoclaw",
+  "name": "nanoharness",
   "version": "1.2.21",
-  "description": "Personal Claude assistant. Lightweight, secure, customizable.",
+  "description": "Personal agent harness forked from NanoClaw. Deep Agents-based and focused on long-running tasks.",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

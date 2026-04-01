@@ -41,7 +41,7 @@ if (!hasCredentials) {
 process.env.CREDENTIAL_PROXY_PORT =
   process.env.CREDENTIAL_PROXY_PORT || '3012';
 process.env.CONTAINER_IMAGE =
-  process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
+  process.env.CONTAINER_IMAGE || 'nanoharness-agent:latest';
 process.env.CONTAINER_TIMEOUT =
   process.env.CONTAINER_TIMEOUT || '240000';
 

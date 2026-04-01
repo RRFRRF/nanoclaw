@@ -5,4 +5,4 @@ function run(command) {
   execSync(command, { stdio: 'inherit' });
 }
 
-run('docker build -t nanoclaw-agent:latest -f container/Dockerfile container');
+run('docker build -t nanoharness-agent:latest -f container/Dockerfile container');

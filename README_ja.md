@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/nanoclaw-logo.png" alt="NanoClaw" width="400">
+  <img src="assets/nanoclaw-logo.png" alt="NanoHarness" width="400">
 </p>
 
 <p align="center">
@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://nanoclaw.dev">nanoclaw.dev</a>&nbsp; • &nbsp;
+  <a href="https://github.com/RRFRRF/nanoharness">GitHub</a>&nbsp; • &nbsp;
   <a href="README.md">English</a>&nbsp; • &nbsp;
   <a href="README_zh.md">中文</a>&nbsp; • &nbsp;
   <a href="https://discord.gg/VDdww8qS42"><img src="https://img.shields.io/discord/1470188214710046894?label=Discord&logo=discord&v=2" alt="Discord" valign="middle"></a>&nbsp; • &nbsp;
@@ -35,26 +35,26 @@ curl -fsSL https://nanoclaw.dev/install-docker-sandboxes-windows.sh | bash
 
 ---
 
-## NanoClawを作った理由
+## NanoHarnessについて
 
 [OpenClaw](https://github.com/openclaw/openclaw)は素晴らしいプロジェクトですが、理解しきれない複雑なソフトウェアに自分の生活へのフルアクセスを与えたまま安心して眠れるとは思えませんでした。OpenClawは約50万行のコード、53の設定ファイル、70以上の依存関係を持っています。セキュリティはアプリケーションレベル（許可リスト、ペアリングコード）であり、真のOS レベルの分離ではありません。すべてが共有メモリを持つ1つのNodeプロセスで動作します。
 
-NanoClawは同じコア機能を提供しますが、理解できる規模のコードベースで実現しています：1つのプロセスと少数のファイル。Claudeエージェントは単なるパーミッションチェックの背後ではなく、ファイルシステム分離された独自のLinuxコンテナで実行されます。
+NanoHarnessは[NanoClaw](https://github.com/qwibitai/nanoclaw)から派生したフォークです。このフォークでは、小さく理解しやすい設計とコンテナ分離の思想を維持しつつ、Claude Agent SDKをDeep Agentsへ置き換え、長時間タスクの安定実行に重点を置いています。現在も開発中です。
 
 ## クイックスタート
 
 ```bash
-gh repo fork qwibitai/nanoclaw --clone
-cd nanoclaw
+gh repo clone RRFRRF/nanoharness
+cd nanoharness
 claude
 ```
 
 <details>
 <summary>GitHub CLIなしの場合</summary>
 
-1. GitHub上で[qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw)をフォーク（Forkボタンをクリック）
-2. `git clone https://github.com/<あなたのユーザー名>/nanoclaw.git`
-3. `cd nanoclaw`
+1. GitHub上で[RRFRRF/nanoharness](https://github.com/RRFRRF/nanoharness)を開く
+2. `git clone https://github.com/<あなたのユーザー名>/nanoharness.git`
+3. `cd nanoharness`
 4. `claude`
 
 </details>
@@ -65,11 +65,11 @@ claude
 
 ## 設計思想
 
-**理解できる規模。** 1つのプロセス、少数のソースファイル、マイクロサービスなし。NanoClawのコードベース全体を理解したい場合は、Claude Codeに説明を求めるだけです。
+**理解できる規模。** 1つのプロセス、少数のソースファイル、マイクロサービスなし。NanoHarnessのコードベース全体を理解したい場合は、Claude Codeに説明を求めるだけです。
 
 **分離によるセキュリティ。** エージェントはLinuxコンテナ（macOSではApple Container、またはDocker）で実行され、明示的にマウントされたものだけが見えます。コマンドはホストではなくコンテナ内で実行されるため、Bashアクセスは安全です。
 
-**個人ユーザー向け。** NanoClawはモノリシックなフレームワークではなく、各ユーザーのニーズに正確にフィットするソフトウェアです。肥大化するのではなく、オーダーメイドになるよう設計されています。自分のフォークを作成し、Claude Codeにニーズに合わせて変更させます。
+**個人ユーザー向け。** NanoHarnessはモノリシックなフレームワークではなく、各ユーザーのニーズに正確にフィットするソフトウェアです。肥大化するのではなく、オーダーメイドになるよう設計されています。自分のフォークを作成し、Claude Codeにニーズに合わせて変更させます。
 
 **カスタマイズ＝コード変更。** 設定ファイルの肥大化なし。動作を変えたい？コードを変更するだけ。コードベースは変更しても安全な規模です。
 
@@ -80,7 +80,7 @@ claude
 
 **機能追加ではなくスキル。** コードベースに機能（例：Telegram対応）を追加する代わりに、コントリビューターは`/add-telegram`のような[Claude Codeスキル](https://code.claude.com/docs/en/skills)を提出し、あなたのフォークを変換します。あなたが必要なものだけを正確に実行するクリーンなコードが手に入ります。
 
-**最高のハーネス、最高のモデル。** NanoClawはClaude Agent SDK上で動作します。つまり、Claude Codeを直接実行しているということです。Claude Codeは高い能力を持ち、そのコーディングと問題解決能力によってNanoClawを変更・拡張し、各ユーザーに合わせてカスタマイズできます。
+**長時間タスク向けのフォーク。** NanoHarnessはNanoClawフォークとして、Claude Agent SDKランタイムをDeep Agentsへ置き換え、長時間タスクをより安定して回すことに注力しています。
 
 ## サポート機能
 
@@ -112,7 +112,7 @@ claude
 
 ## カスタマイズ
 
-NanoClawは設定ファイルを使いません。変更するには、Claude Codeに伝えるだけです：
+NanoHarnessは設定ファイルを使いません。変更するには、Claude Codeに伝えるだけです：
 
 - 「トリガーワードを@Bobに変更して」
 - 「今後はレスポンスをもっと短く直接的にして」
@@ -127,7 +127,7 @@ NanoClawは設定ファイルを使いません。変更するには、Claude Co
 
 **機能を追加するのではなく、スキルを追加してください。**
 
-Telegram対応を追加したい場合、コアコードベースにTelegramを追加するPRを作成しないでください。代わりに、NanoClawをフォークし、ブランチでコード変更を行い、PRを開いてください。あなたのPRから`skill/telegram`ブランチを作成し、他のユーザーが自分のフォークにマージできるようにします。
+Telegram対応を追加したい場合、コアコードベースにTelegramを追加するPRを作成しないでください。代わりに、NanoHarnessをフォークし、ブランチでコード変更を行い、PRを開いてください。
 
 ユーザーは自分のフォークで`/add-telegram`を実行するだけで、あらゆるユースケースに対応しようとする肥大化したシステムではなく、必要なものだけを正確に実行するクリーンなコードが手に入ります。
 
@@ -185,11 +185,11 @@ Dockerはクロスプラットフォーム対応（macOS、Linux、さらにWSL2
 
 **なぜ設定ファイルがないのか？**
 
-設定の肥大化を避けたいからです。すべてのユーザーがNanoClawをカスタマイズし、汎用的なシステムを設定するのではなく、コードが必要なことを正確に実行するようにすべきです。設定ファイルが欲しい場合は、Claudeに追加するよう伝えることができます。
+設定の肥大化を避けたいからです。すべてのユーザーがNanoHarnessをカスタマイズし、汎用的なシステムを設定するのではなく、コードが必要なことを正確に実行するようにすべきです。設定ファイルが欲しい場合は、Claudeに追加するよう伝えることができます。
 
 **サードパーティやオープンソースモデルを使えますか？**
 
-はい。NanoClawはClaude API互換のモデルエンドポイントに対応しています。`.env`ファイルで以下の環境変数を設定してください：
+NanoHarnessは現在、Deep Agents移行の中でより広い互換エンドポイント対応を進めています。運用前に最新の`.env`サポートをコードで確認してください。
 
 ```bash
 ANTHROPIC_BASE_URL=https://your-api-endpoint.com
@@ -205,7 +205,7 @@ ANTHROPIC_AUTH_TOKEN=your-token-here
 
 **問題のデバッグ方法は？**
 
-Claude Codeに聞いてください。「スケジューラーが動いていないのはなぜ？」「最近のログには何がある？」「このメッセージに返信がなかったのはなぜ？」これがNanoClawの基盤となるAIネイティブなアプローチです。
+Claude Codeに聞いてください。「スケジューラーが動いていないのはなぜ？」「最近のログには何がある？」「このメッセージに返信がなかったのはなぜ？」これがNanoHarnessの基盤となるAIネイティブなアプローチです。
 
 **セットアップがうまくいかない場合は？**
 

@@ -39,7 +39,7 @@ async function loadRunner(provider: Provider, authMode: AuthMode) {
     ANTHROPIC_DEFAULT_SONNET_MODEL: undefined,
     ANTHROPIC_MODEL: 'claude-test-model',
     CLAUDE_CODE_SUBAGENT_MODEL: undefined,
-    CONTAINER_IMAGE: 'nanoclaw-agent:latest',
+    CONTAINER_IMAGE: 'nanoharness-agent:latest',
     CONTAINER_MAX_OUTPUT_SIZE: 10485760,
     CONTAINER_TIMEOUT: 1800000,
     CREDENTIAL_PROXY_PORT: 3001,
