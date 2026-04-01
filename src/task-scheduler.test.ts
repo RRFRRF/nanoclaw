@@ -1,17 +1,44 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const schedulerMocks = vi.hoisted(() => ({
+  runContainerAgent: vi.fn(),
+  writeTasksSnapshot: vi.fn(),
+}));
+
+vi.mock('./config.js', async () => {
+  const actual = await vi.importActual<typeof import('./config.js')>(
+    './config.js',
+  );
+  return {
+    ...actual,
+    ASSISTANT_NAME: 'Andy',
+    SCHEDULER_POLL_INTERVAL: 50,
+    TASK_MAX_RETRIES: 2,
+    TASK_RETRY_BASE_MS: 10,
+    TIMEZONE: 'UTC',
+  };
+});
+
+vi.mock('./container-runner.js', () => ({
+  runContainerAgent: schedulerMocks.runContainerAgent,
+  writeTasksSnapshot: schedulerMocks.writeTasksSnapshot,
+}));
+
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
 import {
   _resetSchedulerLoopForTests,
   computeNextRun,
   startSchedulerLoop,
 } from './task-scheduler.js';
+import { isTransientProviderError } from './transient-retry.js';
 
 describe('task scheduler', () => {
   beforeEach(() => {
     _initTestDatabase();
     _resetSchedulerLoopForTests();
     vi.useFakeTimers();
+    schedulerMocks.runContainerAgent.mockReset();
+    schedulerMocks.writeTasksSnapshot.mockReset();
   });
 
   afterEach(() => {
@@ -126,5 +153,247 @@ describe('task scheduler', () => {
     const offset =
       (new Date(nextRun!).getTime() - new Date(scheduledTime).getTime()) % ms;
     expect(offset).toBe(0);
+  });
+
+  it('classifies transient provider errors for scheduled task retry', () => {
+    expect(
+      isTransientProviderError(
+        '502 {"error":{"message":"Upstream service temporarily unavailable"}}',
+      ),
+    ).toBe(true);
+    expect(isTransientProviderError('429 rate limit exceeded')).toBe(true);
+    expect(isTransientProviderError('Request timed out')).toBe(true);
+    expect(isTransientProviderError('Invalid cron expression')).toBe(false);
+  });
+
+  it('retries scheduled tasks on transient provider errors', async () => {
+    createTask({
+      id: 'task-retry-transient',
+      group_folder: 'test-group',
+      chat_jid: 'test@g.us',
+      prompt: 'run retry task',
+      schedule_type: 'once',
+      schedule_value: '2026-02-22T00:00:00.000Z',
+      context_mode: 'group',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    const sendMessage = vi.fn(async () => {});
+    schedulerMocks.runContainerAgent
+      .mockResolvedValueOnce({
+        status: 'error',
+        result: null,
+        error: '429 rate limit exceeded',
+      })
+      .mockImplementationOnce(
+        async (
+          _group: unknown,
+          _input: unknown,
+          _onProcess: unknown,
+          onOutput?: (output: any) => Promise<void>,
+        ) => {
+          await onOutput?.({
+            status: 'success',
+            result: 'done',
+            newSessionId: 'session-1',
+            lastAssistantUuid: 'checkpoint-1',
+          });
+          return {
+            status: 'success',
+            result: null,
+            newSessionId: 'session-1',
+            lastAssistantUuid: 'checkpoint-1',
+            queryCompleted: true,
+          };
+        },
+      );
+
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        'test@g.us': {
+          jid: 'test@g.us',
+          name: 'Test Group',
+          folder: 'test-group',
+          trigger: '@Andy',
+          added_at: new Date().toISOString(),
+        },
+      }),
+      getSessions: () => ({}),
+      upsertSession: () => {},
+      queue: {
+        enqueueTask: vi.fn(
+          (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+            void fn();
+          },
+        ),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      onProcess: () => {},
+      sendMessage,
+    });
+
+    await vi.advanceTimersByTimeAsync(40);
+
+    expect(schedulerMocks.runContainerAgent).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith('test@g.us', 'done');
+  });
+
+  it('does not retry scheduled tasks on deterministic errors', async () => {
+    createTask({
+      id: 'task-no-retry',
+      group_folder: 'test-group',
+      chat_jid: 'test@g.us',
+      prompt: 'run no retry task',
+      schedule_type: 'once',
+      schedule_value: '2026-02-22T00:00:00.000Z',
+      context_mode: 'group',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    schedulerMocks.runContainerAgent.mockResolvedValueOnce({
+      status: 'error',
+      result: null,
+      error: 'Invalid cron expression',
+    });
+
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        'test@g.us': {
+          jid: 'test@g.us',
+          name: 'Test Group',
+          folder: 'test-group',
+          trigger: '@Andy',
+          added_at: new Date().toISOString(),
+        },
+      }),
+      getSessions: () => ({}),
+      upsertSession: () => {},
+      queue: {
+        enqueueTask: vi.fn(
+          (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+            void fn();
+          },
+        ),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(schedulerMocks.runContainerAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses refreshed session state on scheduled-task retry', async () => {
+    createTask({
+      id: 'task-session-refresh',
+      group_folder: 'test-group',
+      chat_jid: 'test@g.us',
+      prompt: 'resume long task',
+      schedule_type: 'once',
+      schedule_value: '2026-02-22T00:00:00.000Z',
+      context_mode: 'group',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    const sessionStore: Record<
+      string,
+      { sessionId: string; resumeAt: string | null }
+    > = {
+      'test-group': {
+        sessionId: 'session-initial',
+        resumeAt: 'checkpoint-initial',
+      },
+    };
+
+    schedulerMocks.runContainerAgent
+      .mockImplementationOnce(
+        async (
+          _group: unknown,
+          input: { sessionId?: string; resumeAt?: string },
+          _onProcess: unknown,
+          onOutput?: (output: any) => Promise<void>,
+        ) => {
+          expect(input.sessionId).toBe('session-initial');
+          expect(input.resumeAt).toBe('checkpoint-initial');
+          await onOutput?.({
+            status: 'success',
+            result: null,
+            newSessionId: 'session-updated',
+            lastAssistantUuid: 'checkpoint-updated',
+          });
+          return {
+            status: 'error',
+            result: null,
+            error: '502 upstream service temporarily unavailable',
+            newSessionId: 'session-updated',
+            lastAssistantUuid: 'checkpoint-updated',
+          };
+        },
+      )
+      .mockImplementationOnce(
+        async (
+          _group: unknown,
+          input: { sessionId?: string; resumeAt?: string },
+        ) => {
+          expect(input.sessionId).toBe('session-updated');
+          expect(input.resumeAt).toBe('checkpoint-updated');
+          return {
+            status: 'success',
+            result: null,
+            newSessionId: 'session-updated',
+            lastAssistantUuid: 'checkpoint-updated',
+            queryCompleted: true,
+          };
+        },
+      );
+
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        'test@g.us': {
+          jid: 'test@g.us',
+          name: 'Test Group',
+          folder: 'test-group',
+          trigger: '@Andy',
+          added_at: new Date().toISOString(),
+        },
+      }),
+      getSessions: () => sessionStore,
+      upsertSession: (groupFolder, session) => {
+        sessionStore[groupFolder] = {
+          sessionId: session.sessionId,
+          resumeAt: session.resumeAt ?? null,
+        };
+      },
+      queue: {
+        enqueueTask: vi.fn(
+          (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+            void fn();
+          },
+        ),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(40);
+
+    expect(schedulerMocks.runContainerAgent).toHaveBeenCalledTimes(2);
+    expect(sessionStore['test-group']).toEqual({
+      sessionId: 'session-updated',
+      resumeAt: 'checkpoint-updated',
+    });
   });
 });

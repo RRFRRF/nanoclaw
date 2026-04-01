@@ -36,6 +36,7 @@ export function startCredentialProxy(
 ): Promise<Server> {
   const secrets = readEnvFile([
     'MODEL_PROVIDER',
+    'MODEL_API_FORMAT',
     'ANTHROPIC_API_KEY',
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_AUTH_TOKEN',
@@ -112,11 +113,29 @@ export function startCredentialProxy(
         });
 
         const sendUpstream = (attempt: number) => {
+          // Prepend any path prefix from the upstream base URL.
+          // e.g. OPENAI_BASE_URL=https://example.com/compatible-mode/v1
+          // + container request /v1/chat/completions
+          // → upstream path /compatible-mode/v1/v1/chat/completions
+          // But typically the container SDK already sends /v1/... and the
+          // base URL also ends with /v1, so we strip the trailing /v1 from
+          // the prefix to avoid duplication.
+          let basePath = upstreamUrl.pathname.replace(/\/+$/, '');
+          // If both the base URL path and the request path share a common
+          // prefix segment (e.g. both start with /v1), avoid doubling it.
+          if (basePath && req.url) {
+            // Remove trailing /v1 (or /v1/) from basePath when req.url starts with /v1
+            const match = basePath.match(/^(.*)\/v1$/);
+            if (match && req.url.startsWith('/v1')) {
+              basePath = match[1];
+            }
+          }
+          const upstreamPath = basePath + (req.url || '/');
           const upstream = makeRequest(
             {
               hostname: upstreamUrl.hostname,
               port: upstreamUrl.port || (isHttps ? 443 : 80),
-              path: req.url,
+              path: upstreamPath,
               method: req.method,
               headers,
               agent: upstreamAgent,
@@ -196,6 +215,13 @@ export function startCredentialProxy(
 }
 
 function resolveProvider(secrets: Record<string, string>): Provider {
+  if (
+    secrets.MODEL_API_FORMAT === 'openai-responses' ||
+    secrets.MODEL_API_FORMAT === 'openai-compatible'
+  ) {
+    return 'openai';
+  }
+  if (secrets.MODEL_API_FORMAT === 'anthropic') return 'anthropic';
   if (secrets.MODEL_PROVIDER === 'openai') return 'openai';
   if (secrets.MODEL_PROVIDER === 'anthropic') return 'anthropic';
   if (secrets.OPENAI_API_KEY || secrets.OPENAI_BASE_URL) return 'openai';
@@ -206,6 +232,7 @@ function resolveProvider(secrets: Record<string, string>): Provider {
 export function detectProvider(): Provider {
   const secrets = readEnvFile([
     'MODEL_PROVIDER',
+    'MODEL_API_FORMAT',
     'OPENAI_API_KEY',
     'OPENAI_BASE_URL',
   ]);

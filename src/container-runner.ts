@@ -19,6 +19,7 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
+  MODEL_API_FORMAT,
   OPENAI_MODEL,
   TIMEZONE,
 } from './config.js';
@@ -279,8 +280,17 @@ function buildContainerArgs(
     ['ANTHROPIC_DEFAULT_HAIKU_MODEL', ANTHROPIC_DEFAULT_HAIKU_MODEL],
     ['OPENAI_MODEL', OPENAI_MODEL],
     ['CLAUDE_CODE_SUBAGENT_MODEL', CLAUDE_CODE_SUBAGENT_MODEL],
+    ['MODEL_API_FORMAT', MODEL_API_FORMAT],
     ['NANOCLAW_HEARTBEAT_MS', process.env.NANOCLAW_HEARTBEAT_MS],
     ['NANOCLAW_RECURSION_LIMIT', process.env.NANOCLAW_RECURSION_LIMIT],
+    ['NANOCLAW_AUTO_CONTINUE_LIMIT', process.env.NANOCLAW_AUTO_CONTINUE_LIMIT],
+    [
+      'NANOCLAW_AUTO_CONTINUE_SCHEDULED',
+      process.env.NANOCLAW_AUTO_CONTINUE_SCHEDULED,
+    ],
+    ['NANOCLAW_AGENT_MAX_RETRIES', process.env.NANOCLAW_AGENT_MAX_RETRIES],
+    ['NANOCLAW_AGENT_RETRY_BASE_MS', process.env.NANOCLAW_AGENT_RETRY_BASE_MS],
+    ['NANOCLAW_MCP_SERVERS_JSON', process.env.NANOCLAW_MCP_SERVERS_JSON],
   ] as const;
   for (const [key, value] of passthroughEnv) {
     if (value) args.push('-e', `${key}=${value}`);
@@ -290,13 +300,15 @@ function buildContainerArgs(
   args.push(...hostGatewayArgs());
 
   // Run as host user so bind-mounted files are accessible.
-  // Skip when running as root (uid 0), as the container's node user (uid 1000),
-  // or when getuid is unavailable (native Windows without WSL).
+  // On native Windows, process.getuid is unavailable and Docker Desktop bind
+  // mounts are more reliable when the container runs as root.
   const hostUid = process.getuid?.();
   const hostGid = process.getgid?.();
   if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
     args.push('--user', `${hostUid}:${hostGid}`);
     args.push('-e', 'HOME=/home/node');
+  } else if (hostUid == null && process.platform === 'win32') {
+    args.push('--user', '0:0');
   }
 
   for (const mount of mounts) {

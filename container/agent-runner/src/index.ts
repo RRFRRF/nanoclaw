@@ -17,6 +17,14 @@ import { ChatAnthropic } from '@langchain/anthropic';
 import { ChatOpenAI } from '@langchain/openai';
 import { tool } from '@langchain/core/tools';
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import {
+  StdioClientTransport,
+  type StdioServerParameters,
+} from '@modelcontextprotocol/sdk/client/stdio.js';
+import {
+  CompatibilityCallToolResultSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import { CronExpressionParser } from 'cron-parser';
 import { createDeepAgent, LocalShellBackend } from 'deepagents';
 import { z } from 'zod';
@@ -103,6 +111,25 @@ interface RuntimeContextSnapshot {
 interface RuntimePromptBundle {
   runtimePrompt: string;
   snapshot: RuntimeContextSnapshot;
+}
+
+interface AutoContinueConfig {
+  limit: number;
+  allowScheduledTasks: boolean;
+}
+
+export interface ConfiguredMcpServer {
+  name: string;
+  command: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+}
+
+interface LoadedMcpToolSet {
+  tools: any[];
+  cleanup: () => Promise<void>;
+  servers: ConfiguredMcpServer[];
 }
 
 const WORKSPACE_ROOT = '/workspace';
@@ -199,6 +226,93 @@ function formatElapsed(elapsedMs: number): string {
   const seconds = totalSeconds % 60;
   if (minutes === 0) return `${seconds}s`;
   return `${minutes}m ${seconds}s`;
+}
+
+function parseBooleanFlag(value: string | undefined, defaultValue = false): boolean {
+  if (!value) return defaultValue;
+  return /^(?:1|true|yes|on)$/i.test(value.trim());
+}
+
+export function getAutoContinueConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): AutoContinueConfig {
+  return {
+    limit: Math.max(
+      0,
+      Number.parseInt(env.NANOCLAW_AUTO_CONTINUE_LIMIT || '6', 10) || 6,
+    ),
+    allowScheduledTasks: parseBooleanFlag(
+      env.NANOCLAW_AUTO_CONTINUE_SCHEDULED,
+      false,
+    ),
+  };
+}
+
+export function parseConfiguredMcpServers(
+  raw = process.env.NANOCLAW_MCP_SERVERS_JSON,
+): ConfiguredMcpServer[] {
+  if (!raw?.trim()) return [];
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      throw new Error('MCP server config must be a JSON array.');
+    }
+
+    return parsed.flatMap((entry, index) => {
+      if (!entry || typeof entry !== 'object') {
+        log(`Ignoring MCP server config at index ${index}: expected object.`);
+        return [];
+      }
+
+      const record = entry as AnyRecord;
+      if (
+        typeof record.name !== 'string' ||
+        !record.name.trim() ||
+        typeof record.command !== 'string' ||
+        !record.command.trim()
+      ) {
+        log(
+          `Ignoring MCP server config at index ${index}: both name and command are required.`,
+        );
+        return [];
+      }
+
+      const env =
+        record.env && typeof record.env === 'object'
+          ? Object.fromEntries(
+              Object.entries(record.env as Record<string, unknown>).flatMap(
+                ([key, value]) =>
+                  typeof value === 'string' ? [[key, value]] : [],
+              ),
+            )
+          : undefined;
+
+      return [
+        {
+          name: record.name.trim(),
+          command: record.command.trim(),
+          args: Array.isArray(record.args)
+            ? record.args.filter(
+                (value): value is string => typeof value === 'string',
+              )
+            : undefined,
+          cwd:
+            typeof record.cwd === 'string' && record.cwd.trim()
+              ? record.cwd
+              : undefined,
+          env,
+        },
+      ];
+    });
+  } catch (err) {
+    log(
+      `Failed to parse NANOCLAW_MCP_SERVERS_JSON: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return [];
+  }
 }
 
 export function buildWorkspaceManifest(
@@ -425,13 +539,13 @@ function looksLikePlanningContinuation(text: string): boolean {
   );
 }
 
-function getAutoContinueReason(
+export function getAutoContinueReason(
   queryResult: QueryRunResult,
   isScheduledTask: boolean,
   autoContinueCount: number,
+  config: AutoContinueConfig = getAutoContinueConfig(),
 ): string | null {
-  const MAX_AUTO_CONTINUES = 6;
-  if (isScheduledTask) return null;
+  if (isScheduledTask && !config.allowScheduledTasks) return null;
   if (queryResult.closedDuringQuery) return null;
   if (
     queryResult.lastResultSubtype &&
@@ -439,7 +553,7 @@ function getAutoContinueReason(
   ) {
     return null;
   }
-  if (autoContinueCount >= MAX_AUTO_CONTINUES) return null;
+  if (autoContinueCount >= config.limit) return null;
 
   const assistantText = queryResult.lastAssistantText.trim();
   const assistantPlain = stripStructuredAssistantContent(assistantText);
@@ -592,7 +706,7 @@ export function buildRuntimePromptBundle(
   const sections: string[] = [];
   const pendingIpcMessages = options?.pendingIpcMessages || [];
   const runtimeInstructions = [
-    'You are running inside NanoClaw on a Deep Agents runtime.',
+    'You are running inside NanoHarness on a Deep Agents runtime.',
     `Working directory: ${GROUP_ROOT}`,
     `Write all new files, screenshots, reports, logs, and generated outputs under ${GROUP_ROOT}.`,
     `Prefer absolute output paths under ${REQUIRED_OUTPUT_ROOT} so artifacts never land outside the workspace by accident.`,
@@ -607,6 +721,7 @@ export function buildRuntimePromptBundle(
     '- Grep -> grep',
     '- Task -> task',
     '- TodoWrite -> write_todos',
+    '- Generic MCP tools -> mcp__<server>__<tool>',
     '- NanoClaw orchestration tools stay as mcp__nanoclaw__*',
     'Prefer skill-guided workflows when a relevant skill is available.',
     'Persist intermediate artifacts to disk for long workflows instead of emitting huge inline outputs.',
@@ -729,6 +844,233 @@ async function getLatestCheckpointId(
   }
 
   return undefined;
+}
+
+function sanitizeMcpNameToken(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || 'tool';
+}
+
+function applySchemaDescription<T extends z.ZodTypeAny>(
+  schema: T,
+  description?: string,
+): T {
+  return description?.trim() ? (schema.describe(description) as T) : schema;
+}
+
+function jsonSchemaToZod(schema: unknown, depth = 0): z.ZodTypeAny {
+  if (!schema || typeof schema !== 'object' || depth > 6) {
+    return z.unknown();
+  }
+
+  const record = schema as AnyRecord;
+  const description =
+    typeof record.description === 'string' ? record.description : undefined;
+  const typeValue = Array.isArray(record.type)
+    ? record.type.find((value): value is string => typeof value === 'string')
+    : typeof record.type === 'string'
+      ? record.type
+      : undefined;
+
+  if (typeValue === 'string') {
+    return applySchemaDescription(z.string(), description);
+  }
+  if (typeValue === 'number') {
+    return applySchemaDescription(z.number(), description);
+  }
+  if (typeValue === 'integer') {
+    return applySchemaDescription(z.number().int(), description);
+  }
+  if (typeValue === 'boolean') {
+    return applySchemaDescription(z.boolean(), description);
+  }
+  if (typeValue === 'array') {
+    const itemSchema = jsonSchemaToZod(record.items, depth + 1);
+    return applySchemaDescription(z.array(itemSchema), description);
+  }
+  if (typeValue === 'object') {
+    return applySchemaDescription(
+      jsonSchemaObjectToZod(record, depth + 1),
+      description,
+    );
+  }
+
+  return applySchemaDescription(z.unknown(), description);
+}
+
+function jsonSchemaObjectToZod(
+  schema: unknown,
+  depth = 0,
+): z.ZodObject<Record<string, z.ZodTypeAny>> {
+  if (!schema || typeof schema !== 'object' || depth > 6) {
+    return z.object({}).catchall(z.unknown());
+  }
+
+  const record = schema as AnyRecord;
+  const properties =
+    record.properties && typeof record.properties === 'object'
+      ? (record.properties as Record<string, unknown>)
+      : {};
+  const required = new Set(
+    Array.isArray(record.required)
+      ? record.required.filter(
+          (value): value is string => typeof value === 'string',
+        )
+      : [],
+  );
+
+  const shape: Record<string, z.ZodTypeAny> = {};
+  for (const [key, propertySchema] of Object.entries(properties)) {
+    const propertyType = jsonSchemaToZod(propertySchema, depth + 1);
+    shape[key] = required.has(key) ? propertyType : propertyType.optional();
+  }
+
+  const objectSchema = z.object(shape);
+  if (record.additionalProperties === false) {
+    return objectSchema;
+  }
+  if (record.additionalProperties && typeof record.additionalProperties === 'object') {
+    return objectSchema.catchall(
+      jsonSchemaToZod(record.additionalProperties, depth + 1),
+    );
+  }
+  return objectSchema.catchall(z.unknown());
+}
+
+function renderMcpToolResult(result: AnyRecord): string {
+  const parts: string[] = [];
+
+  if (Array.isArray(result.content)) {
+    for (const block of result.content) {
+      if (!block || typeof block !== 'object') continue;
+      const record = block as AnyRecord;
+      if (record.type === 'text' && typeof record.text === 'string') {
+        parts.push(record.text);
+        continue;
+      }
+      if (
+        record.type === 'resource_link' &&
+        typeof record.name === 'string' &&
+        typeof record.uri === 'string'
+      ) {
+        parts.push(`${record.name}: ${record.uri}`);
+        continue;
+      }
+      if (typeof record.type === 'string') {
+        parts.push(`[${record.type}]`);
+      }
+    }
+  }
+
+  if (result.structuredContent && typeof result.structuredContent === 'object') {
+    try {
+      parts.push(JSON.stringify(result.structuredContent, null, 2));
+    } catch {
+      parts.push(String(result.structuredContent));
+    }
+  }
+
+  const rendered = parts.join('\n\n').trim();
+  if (!rendered) {
+    return result.isError ? 'MCP tool returned an error.' : 'MCP tool completed.';
+  }
+  return rendered;
+}
+
+async function loadConfiguredMcpTools(
+  emitStatus: (text: string, replace?: boolean) => void,
+): Promise<LoadedMcpToolSet> {
+  const servers = parseConfiguredMcpServers();
+  if (servers.length === 0) {
+    return {
+      tools: [],
+      cleanup: async () => {},
+      servers: [],
+    };
+  }
+
+  const transports: StdioClientTransport[] = [];
+  const runtimeTools: any[] = [];
+
+  for (const server of servers) {
+    const serverName = sanitizeMcpNameToken(server.name);
+
+    try {
+      const transport = new StdioClientTransport({
+        command: server.command,
+        args: server.args,
+        cwd: server.cwd,
+        env: server.env,
+        stderr: 'pipe',
+      } satisfies StdioServerParameters);
+      const stderrStream = transport.stderr;
+      if (stderrStream) {
+        stderrStream.on('data', (chunk) => {
+          const text = chunk.toString().trim();
+          if (text) log(`[mcp:${server.name}] ${text}`);
+        });
+      }
+
+      const client = new Client(
+        {
+          name: 'nanoharness-agent-runner',
+          version: '1.0.0',
+        },
+        {
+          capabilities: {},
+        },
+      );
+
+      await client.connect(transport);
+      transports.push(transport);
+
+      const { tools } = await client.listTools();
+      log(`Loaded ${tools.length} tools from MCP server ${server.name}`);
+
+      for (const mcpTool of tools) {
+        const toolName = `mcp__${serverName}__${sanitizeMcpNameToken(mcpTool.name)}`;
+        runtimeTools.push(
+          tool(
+            async (input: Record<string, unknown>) => {
+              emitStatus(`${toolName}: executing`);
+              const result = (await client.callTool(
+                {
+                  name: mcpTool.name,
+                  arguments: input,
+                },
+                CompatibilityCallToolResultSchema,
+              )) as unknown as AnyRecord;
+              const rendered = renderMcpToolResult(result);
+              if (result.isError === true) {
+                throw new Error(rendered);
+              }
+              return rendered;
+            },
+            {
+              name: toolName,
+              description:
+                mcpTool.description ||
+                `MCP tool "${mcpTool.name}" provided by server "${server.name}".`,
+              schema: jsonSchemaObjectToZod(mcpTool.inputSchema),
+            },
+          ),
+        );
+      }
+    } catch (err) {
+      log(
+        `Failed to initialize MCP server ${server.name}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  return {
+    tools: runtimeTools,
+    servers,
+    cleanup: async () => {
+      await Promise.allSettled(transports.map((transport) => transport.close()));
+    },
+  };
 }
 
 function createNanoClawTools(
@@ -1060,7 +1402,9 @@ async function buildAgent(
     '/home/node/.claude/deepagents-checkpoints.sqlite',
   );
 
-  const tools = createNanoClawTools(containerInput, emitStatus);
+  const nanoClawTools = createNanoClawTools(containerInput, emitStatus);
+  const mcpToolSet = await loadConfiguredMcpTools(emitStatus);
+  const tools = [...nanoClawTools, ...mcpToolSet.tools] as typeof nanoClawTools;
   const provider = process.env.MODEL_PROVIDER || 'anthropic';
   const model =
     provider === 'openai'
@@ -1091,7 +1435,11 @@ async function buildAgent(
     invoke: (input: unknown, config?: unknown) => Promise<unknown>;
   };
 
-  return { agent, checkpointer };
+  return {
+    agent,
+    checkpointer,
+    cleanup: mcpToolSet.cleanup,
+  };
 }
 
 async function runQuery(
@@ -1252,7 +1600,11 @@ async function main(): Promise<void> {
     });
   };
 
-  const { agent, checkpointer } = await buildAgent(containerInput, statusWriter);
+  const autoContinueConfig = getAutoContinueConfig();
+  const { agent, checkpointer, cleanup } = await buildAgent(
+    containerInput,
+    statusWriter,
+  );
 
   let sessionId = containerInput.sessionId;
   let resumeAt = containerInput.resumeAt;
@@ -1301,6 +1653,7 @@ async function main(): Promise<void> {
         queryResult,
         containerInput.isScheduledTask === true,
         autoContinueCount,
+        autoContinueConfig,
       );
       if (autoContinueReason) {
         autoContinueCount += 1;
@@ -1355,6 +1708,8 @@ async function main(): Promise<void> {
       error: errorMessage,
     });
     process.exit(1);
+  } finally {
+    await cleanup();
   }
 }
 

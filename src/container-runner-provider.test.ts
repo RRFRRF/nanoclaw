@@ -46,6 +46,7 @@ async function loadRunner(provider: Provider, authMode: AuthMode) {
     DATA_DIR: '/tmp/nanoclaw-test-data',
     GROUPS_DIR: '/tmp/nanoclaw-test-groups',
     IDLE_TIMEOUT: 1800000,
+    MODEL_API_FORMAT: provider === 'openai' ? 'openai-responses' : 'anthropic',
     OPENAI_MODEL: 'gpt-test-model',
     TIMEZONE: 'America/Los_Angeles',
   }));
@@ -148,6 +149,7 @@ describe('container-runner provider env injection', () => {
     const args = getSpawnArgs(spawnMock);
     expect(args).toContain('-e');
     expect(args).toContain('MODEL_PROVIDER=anthropic');
+    expect(args).toContain('MODEL_API_FORMAT=anthropic');
     expect(args).toContain(
       'ANTHROPIC_BASE_URL=http://host.docker.internal:3001',
     );
@@ -185,6 +187,7 @@ describe('container-runner provider env injection', () => {
 
     const args = getSpawnArgs(spawnMock);
     expect(args).toContain('MODEL_PROVIDER=openai');
+    expect(args).toContain('MODEL_API_FORMAT=openai-responses');
     expect(args).toContain(
       'OPENAI_BASE_URL=http://host.docker.internal:3001',
     );

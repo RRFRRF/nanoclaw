@@ -230,6 +230,17 @@ describe('credential-proxy', () => {
     expect(detectAuthMode()).toBe('bearer');
   });
 
+  it('detects OpenAI provider from MODEL_API_FORMAT for compatible endpoints', () => {
+    Object.assign(mockEnv, {
+      MODEL_API_FORMAT: 'openai-compatible',
+      OPENAI_BASE_URL: 'http://127.0.0.1:9999/v1',
+      OPENAI_API_KEY: 'sk-openai-compatible-key',
+    });
+
+    expect(detectProvider()).toBe('openai');
+    expect(detectAuthMode()).toBe('bearer');
+  });
+
   it('retries once on transient upstream socket reset', async () => {
     let requestCount = 0;
     await new Promise<void>((r) => upstreamServer.close(() => r()));

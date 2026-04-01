@@ -10,6 +10,7 @@ const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
   'MODEL_PROVIDER',
+  'MODEL_API_FORMAT',
   'ANTHROPIC_MODEL',
   'ANTHROPIC_DEFAULT_OPUS_MODEL',
   'ANTHROPIC_DEFAULT_SONNET_MODEL',
@@ -25,6 +26,8 @@ export const ASSISTANT_HAS_OWN_NUMBER =
     envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
 export const MODEL_PROVIDER =
   process.env.MODEL_PROVIDER || envConfig.MODEL_PROVIDER || 'anthropic';
+export const MODEL_API_FORMAT =
+  process.env.MODEL_API_FORMAT || envConfig.MODEL_API_FORMAT || 'anthropic';
 export const ANTHROPIC_MODEL =
   process.env.ANTHROPIC_MODEL || envConfig.ANTHROPIC_MODEL;
 export const ANTHROPIC_DEFAULT_OPUS_MODEL =
@@ -84,6 +87,22 @@ export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10);
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
+);
+export const TASK_MAX_RETRIES = Math.max(
+  0,
+  parseInt(process.env.NANOCLAW_TASK_MAX_RETRIES || '3', 10) || 3,
+);
+export const TASK_RETRY_BASE_MS = Math.max(
+  1000,
+  parseInt(process.env.NANOCLAW_TASK_RETRY_BASE_MS || '10000', 10) || 10000,
+);
+export const AGENT_MAX_RETRIES = Math.max(
+  0,
+  parseInt(process.env.NANOCLAW_AGENT_MAX_RETRIES || '2', 10) || 2,
+);
+export const AGENT_RETRY_BASE_MS = Math.max(
+  1000,
+  parseInt(process.env.NANOCLAW_AGENT_RETRY_BASE_MS || '5000', 10) || 5000,
 );
 
 function escapeRegex(str: string): string {

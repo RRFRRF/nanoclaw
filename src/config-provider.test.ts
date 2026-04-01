@@ -23,6 +23,7 @@ describe('config provider selection', () => {
     const config = await loadConfigWithEnv({});
 
     expect(config.MODEL_PROVIDER).toBe('anthropic');
+    expect(config.MODEL_API_FORMAT).toBe('anthropic');
     expect(config.OPENAI_MODEL).toBeUndefined();
   });
 
@@ -34,6 +35,17 @@ describe('config provider selection', () => {
 
     expect(config.MODEL_PROVIDER).toBe('openai');
     expect(config.OPENAI_MODEL).toBe('gpt-4.1-mini');
+  });
+
+  it('loads explicit API format from env file', async () => {
+    const config = await loadConfigWithEnv({
+      MODEL_PROVIDER: 'openai',
+      MODEL_API_FORMAT: 'openai-compatible',
+      OPENAI_MODEL: 'gpt-4.1-mini',
+    });
+
+    expect(config.MODEL_PROVIDER).toBe('openai');
+    expect(config.MODEL_API_FORMAT).toBe('openai-compatible');
   });
 
   it('prefers process env over env file values', async () => {

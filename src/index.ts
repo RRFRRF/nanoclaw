@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  AGENT_MAX_RETRIES,
+  AGENT_RETRY_BASE_MS,
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
   DATA_DIR,
@@ -67,6 +69,7 @@ import {
 import { ensureMountAllowlist } from './mount-security.js';
 import { acquireServiceLock, releaseServiceLock } from './service-lock.js';
 import { startSchedulerLoop } from './task-scheduler.js';
+import { shouldRetryTransientAttempt } from './transient-retry.js';
 import {
   AdditionalMount,
   Channel,
@@ -239,6 +242,10 @@ function persistSessionFromOutput(
 function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -588,9 +595,6 @@ async function runAgent(
   retryOnInvalidSession: boolean = true,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
-  const session = sessions[group.folder];
-  const sessionId = session?.sessionId;
-  const resumeAt = session?.resumeAt || undefined;
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -617,76 +621,135 @@ async function runAgent(
     new Set(Object.keys(registeredGroups)),
   );
 
-  // Wrap onOutput to track session ID from streamed results
-  const wrappedOnOutput = onOutput
-    ? async (output: ContainerOutput) => {
-        persistSessionFromOutput(group.folder, output, sessionId);
-        await onOutput(output);
-      }
-    : undefined;
+  const maxAttempts = Math.max(1, AGENT_MAX_RETRIES + 1);
+  let allowSessionRepair = retryOnInvalidSession;
 
-  try {
-    const output = await runContainerAgent(
-      group,
-      {
-        prompt,
-        sessionId,
-        resumeAt,
-        groupFolder: group.folder,
-        chatJid,
-        isMain,
-        assistantName: ASSISTANT_NAME,
-      },
-      (proc, containerName) =>
-        queue.registerProcess(chatJid, proc, containerName, group.folder),
-      wrappedOnOutput,
-    );
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const session = sessions[group.folder];
+    const sessionId = session?.sessionId;
+    const resumeAt = session?.resumeAt || undefined;
+    let attemptSentVisibleResult = false;
+    let attemptObservedCompletion = false;
 
-    persistSessionFromOutput(group.folder, output, sessionId);
+    const wrappedOnOutput = onOutput
+      ? async (output: ContainerOutput) => {
+          persistSessionFromOutput(group.folder, output, sessionId);
+          if (output.result) attemptSentVisibleResult = true;
+          if (output.queryCompleted) attemptObservedCompletion = true;
+          await onOutput(output);
+        }
+      : async (output: ContainerOutput) => {
+          persistSessionFromOutput(group.folder, output, sessionId);
+          if (output.result) attemptSentVisibleResult = true;
+          if (output.queryCompleted) attemptObservedCompletion = true;
+        };
 
-    if (output.status === 'error') {
-      if (
-        retryOnInvalidSession &&
-        sessionId &&
-        isMissingConversationError(output.error)
-      ) {
-        logger.warn(
-          { group: group.name, sessionId, error: output.error },
-          'Stored session is no longer valid, clearing it and retrying once',
-        );
-        clearSessionState(group.folder);
-        return runAgent(group, prompt, chatJid, onOutput, false);
-      }
-
-      if (
-        retryOnInvalidSession &&
-        sessionId &&
-        resumeAt &&
-        isMissingResumePointError(output.error)
-      ) {
-        logger.warn(
-          { group: group.name, sessionId, resumeAt, error: output.error },
-          'Stored resume cursor is no longer valid, clearing it and retrying once',
-        );
-        upsertSessionState(group.folder, {
-          sessionId: output.newSessionId || sessionId,
-          resumeAt: null,
-        });
-        return runAgent(group, prompt, chatJid, onOutput, false);
-      }
-
-      logger.error(
-        { group: group.name, error: output.error },
-        'Container agent error',
+    try {
+      const output = await runContainerAgent(
+        group,
+        {
+          prompt,
+          sessionId,
+          resumeAt,
+          groupFolder: group.folder,
+          chatJid,
+          isMain,
+          assistantName: ASSISTANT_NAME,
+        },
+        (proc, containerName) =>
+          queue.registerProcess(chatJid, proc, containerName, group.folder),
+        wrappedOnOutput,
       );
+
+      persistSessionFromOutput(group.folder, output, sessionId);
+      if (output.result) attemptSentVisibleResult = true;
+      if (output.queryCompleted) attemptObservedCompletion = true;
+
+      if (output.status === 'error') {
+        if (
+          allowSessionRepair &&
+          sessionId &&
+          isMissingConversationError(output.error)
+        ) {
+          logger.warn(
+            { group: group.name, sessionId, error: output.error },
+            'Stored session is no longer valid, clearing it and retrying once',
+          );
+          clearSessionState(group.folder);
+          allowSessionRepair = false;
+          continue;
+        }
+
+        if (
+          allowSessionRepair &&
+          sessionId &&
+          resumeAt &&
+          isMissingResumePointError(output.error)
+        ) {
+          logger.warn(
+            { group: group.name, sessionId, resumeAt, error: output.error },
+            'Stored resume cursor is no longer valid, clearing it and retrying once',
+          );
+          upsertSessionState(group.folder, {
+            sessionId: output.newSessionId || sessionId,
+            resumeAt: null,
+          });
+          allowSessionRepair = false;
+          continue;
+        }
+
+        if (
+          shouldRetryTransientAttempt({
+            attempt,
+            maxAttempts,
+            error: output.error,
+            sentVisibleResult: attemptSentVisibleResult,
+            observedCompletion: attemptObservedCompletion,
+          })
+        ) {
+          const delayMs = AGENT_RETRY_BASE_MS * Math.pow(2, attempt - 1);
+          logger.warn(
+            { group: group.name, attempt, maxAttempts, delayMs, error: output.error },
+            'Container turn hit a transient provider error, retrying',
+          );
+          await wait(delayMs);
+          continue;
+        }
+
+        logger.error(
+          { group: group.name, error: output.error },
+          'Container agent error',
+        );
+        return 'error';
+      }
+
+      return 'success';
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      if (
+        shouldRetryTransientAttempt({
+          attempt,
+          maxAttempts,
+          error,
+          sentVisibleResult: attemptSentVisibleResult,
+          observedCompletion: attemptObservedCompletion,
+        })
+      ) {
+        const delayMs = AGENT_RETRY_BASE_MS * Math.pow(2, attempt - 1);
+        logger.warn(
+          { group: group.name, attempt, maxAttempts, delayMs, error },
+          'Container turn threw a transient provider error, retrying',
+        );
+        await wait(delayMs);
+        continue;
+      }
+
+      logger.error({ group: group.name, err }, 'Agent error');
       return 'error';
     }
-
-    return 'success';
-  } catch (err) {
-    logger.error({ group: group.name, err }, 'Agent error');
-    return 'error';
   }
+
+  return 'error';
 }
 
 async function startMessageLoop(): Promise<void> {

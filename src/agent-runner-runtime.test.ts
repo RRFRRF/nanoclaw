@@ -48,6 +48,13 @@ const fsState = vi.hoisted(() => {
   };
 });
 
+const mcpState = vi.hoisted(() => ({
+  connect: vi.fn(async () => {}),
+  listTools: vi.fn(async () => ({ tools: [] })),
+  callTool: vi.fn(async () => ({ content: [] })),
+  close: vi.fn(async () => {}),
+}));
+
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
   return {
@@ -75,6 +82,26 @@ vi.mock('@langchain/langgraph-checkpoint-sqlite', () => ({
   SqliteSaver: {
     fromConnString: vi.fn(),
   },
+}));
+
+vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
+  Client: class MockClient {
+    connect = mcpState.connect;
+    listTools = mcpState.listTools;
+    callTool = mcpState.callTool;
+  },
+}));
+
+vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
+  StdioClientTransport: class MockTransport {
+    stderr = { on: vi.fn() };
+    close = mcpState.close;
+  },
+}));
+
+vi.mock('@modelcontextprotocol/sdk/types.js', () => ({
+  CallToolResultSchema: {},
+  CompatibilityCallToolResultSchema: {},
 }));
 
 vi.mock('deepagents', () => ({
@@ -132,6 +159,32 @@ describe('agent runner runtime diagnostics', () => {
           entries?: string[];
         }>;
       };
+      getAutoContinueConfig: (env?: NodeJS.ProcessEnv) => {
+        limit: number;
+        allowScheduledTasks: boolean;
+      };
+      getAutoContinueReason: (
+        queryResult: {
+          closedDuringQuery: boolean;
+          lastAssistantText: string;
+          lastResultText: string | null;
+          lastResultSubtype?: string;
+          sawStatusEvent: boolean;
+        },
+        isScheduledTask: boolean,
+        autoContinueCount: number,
+        config?: {
+          limit: number;
+          allowScheduledTasks: boolean;
+        },
+      ) => string | null;
+      parseConfiguredMcpServers: (raw?: string) => Array<{
+        name: string;
+        command: string;
+        args?: string[];
+        cwd?: string;
+        env?: Record<string, string>;
+      }>;
     };
   }
 
@@ -195,5 +248,64 @@ describe('agent runner runtime diagnostics', () => {
         }),
       ]),
     );
+  });
+
+  it('reads auto-continue config from env and can include scheduled tasks', async () => {
+    const mod = await loadRuntimeModule();
+
+    const config = mod.getAutoContinueConfig({
+      NANOCLAW_AUTO_CONTINUE_LIMIT: '9',
+      NANOCLAW_AUTO_CONTINUE_SCHEDULED: 'true',
+    } as NodeJS.ProcessEnv);
+
+    expect(config).toEqual({
+      limit: 9,
+      allowScheduledTasks: true,
+    });
+
+    const reason = mod.getAutoContinueReason(
+      {
+        closedDuringQuery: false,
+        lastAssistantText: 'I will start by checking the repository.',
+        lastResultText: null,
+        lastResultSubtype: 'success',
+        sawStatusEvent: false,
+      },
+      true,
+      0,
+      config,
+    );
+
+    expect(reason).toBe('planning output emitted without a final result');
+  });
+
+  it('parses configured MCP stdio servers from env JSON', async () => {
+    const mod = await loadRuntimeModule();
+
+    const servers = mod.parseConfiguredMcpServers(
+      JSON.stringify([
+        {
+          name: 'playwright',
+          command: 'node',
+          args: ['./mcp/playwright.js'],
+          cwd: '/workspace/group',
+          env: {
+            FOO: 'bar',
+          },
+        },
+      ]),
+    );
+
+    expect(servers).toEqual([
+      {
+        name: 'playwright',
+        command: 'node',
+        args: ['./mcp/playwright.js'],
+        cwd: '/workspace/group',
+        env: {
+          FOO: 'bar',
+        },
+      },
+    ]);
   });
 });

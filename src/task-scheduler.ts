@@ -2,7 +2,13 @@ import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
-import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
+import {
+  ASSISTANT_NAME,
+  SCHEDULER_POLL_INTERVAL,
+  TASK_MAX_RETRIES,
+  TASK_RETRY_BASE_MS,
+  TIMEZONE,
+} from './config.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -19,6 +25,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
+import { shouldRetryTransientAttempt } from './transient-retry.js';
 import { RegisteredGroup, ScheduledTask, SessionState } from './types.js';
 
 /**
@@ -74,6 +81,10 @@ export interface SchedulerDependencies {
     groupFolder: string,
   ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function runTask(
@@ -150,13 +161,6 @@ async function runTask(
   let result: string | null = null;
   let error: string | null = null;
 
-  // For group context mode, use the group's current session
-  const sessions = deps.getSessions();
-  const session =
-    task.context_mode === 'group' ? sessions[task.group_folder] : undefined;
-  const sessionId = session?.sessionId;
-  const resumeAt = session?.resumeAt || undefined;
-
   // After the task produces a result, close the container promptly.
   // Tasks are single-turn — no need to wait IDLE_TIMEOUT (30 min) for the
   // query loop to time out. A short delay handles any final MCP calls.
@@ -171,73 +175,139 @@ async function runTask(
     }, TASK_CLOSE_DELAY_MS);
   };
 
-  try {
-    const output = await runContainerAgent(
-      group,
-      {
-        prompt: task.prompt,
-        sessionId,
-        resumeAt,
-        groupFolder: task.group_folder,
-        chatJid: task.chat_jid,
-        isMain,
-        isScheduledTask: true,
-        assistantName: ASSISTANT_NAME,
-      },
-      (proc, containerName) =>
-        deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
-      async (streamedOutput: ContainerOutput) => {
-        if (streamedOutput.newSessionId) {
-          deps.upsertSession(task.group_folder, {
-            sessionId: streamedOutput.newSessionId,
-            resumeAt: streamedOutput.lastAssistantUuid || null,
-          });
-        }
-        if (streamedOutput.result) {
-          result = streamedOutput.result;
-          // Forward result to user (sendMessage handles formatting)
-          await deps.sendMessage(task.chat_jid, streamedOutput.result);
-          scheduleClose();
-        }
-        if (
-          streamedOutput.status === 'success' &&
-          !streamedOutput.result &&
-          !streamedOutput.event &&
-          streamedOutput.queryCompleted
-        ) {
-          deps.queue.notifyIdle(task.chat_jid);
-          scheduleClose(); // Close promptly even when result is null (e.g. IPC-only tasks)
-        }
-        if (streamedOutput.status === 'error') {
-          error = streamedOutput.error || 'Unknown error';
-        }
-      },
-    );
+  const maxAttempts = Math.max(1, TASK_MAX_RETRIES + 1);
 
-    if (closeTimer) clearTimeout(closeTimer);
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const sessions = deps.getSessions();
+    const session =
+      task.context_mode === 'group' ? sessions[task.group_folder] : undefined;
+    const sessionId = session?.sessionId;
+    const resumeAt = session?.resumeAt || undefined;
+    let attemptSentVisibleResult = false;
+    let attemptObservedCompletion = false;
+    error = null;
 
-    if (output.newSessionId) {
-      deps.upsertSession(task.group_folder, {
-        sessionId: output.newSessionId,
-        resumeAt: output.lastAssistantUuid || null,
-      });
+    try {
+      const output = await runContainerAgent(
+        group,
+        {
+          prompt: task.prompt,
+          sessionId,
+          resumeAt,
+          groupFolder: task.group_folder,
+          chatJid: task.chat_jid,
+          isMain,
+          isScheduledTask: true,
+          assistantName: ASSISTANT_NAME,
+        },
+        (proc, containerName) =>
+          deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
+        async (streamedOutput: ContainerOutput) => {
+          if (streamedOutput.newSessionId) {
+            deps.upsertSession(task.group_folder, {
+              sessionId: streamedOutput.newSessionId,
+              resumeAt: streamedOutput.lastAssistantUuid || null,
+            });
+          }
+          if (streamedOutput.result) {
+            result = streamedOutput.result;
+            attemptSentVisibleResult = true;
+            await deps.sendMessage(task.chat_jid, streamedOutput.result);
+            scheduleClose();
+          }
+          if (
+            streamedOutput.status === 'success' &&
+            !streamedOutput.result &&
+            !streamedOutput.event &&
+            streamedOutput.queryCompleted
+          ) {
+            attemptObservedCompletion = true;
+            deps.queue.notifyIdle(task.chat_jid);
+            scheduleClose();
+          }
+          if (streamedOutput.status === 'error') {
+            error = streamedOutput.error || 'Unknown error';
+          }
+        },
+      );
+
+      if (closeTimer) {
+        clearTimeout(closeTimer);
+        closeTimer = null;
+      }
+
+      if (output.newSessionId) {
+        deps.upsertSession(task.group_folder, {
+          sessionId: output.newSessionId,
+          resumeAt: output.lastAssistantUuid || null,
+        });
+      }
+
+      if (output.status === 'error') {
+        error = output.error || 'Unknown error';
+      } else if (output.result) {
+        result = output.result;
+        attemptSentVisibleResult = true;
+      } else {
+        attemptObservedCompletion =
+          attemptObservedCompletion || output.queryCompleted === true;
+      }
+
+      if (
+        output.status === 'error' &&
+        shouldRetryTransientAttempt({
+          attempt,
+          maxAttempts,
+          error,
+          sentVisibleResult: attemptSentVisibleResult,
+          observedCompletion: attemptObservedCompletion,
+        })
+      ) {
+        const delayMs = TASK_RETRY_BASE_MS * Math.pow(2, attempt - 1);
+        logger.warn(
+          { taskId: task.id, attempt, maxAttempts, delayMs, error },
+          'Scheduled task hit a transient error, retrying',
+        );
+        await wait(delayMs);
+        continue;
+      }
+
+      logger.info(
+        {
+          taskId: task.id,
+          durationMs: Date.now() - startTime,
+          attempt,
+          maxAttempts,
+        },
+        'Task completed',
+      );
+      break;
+    } catch (err) {
+      if (closeTimer) {
+        clearTimeout(closeTimer);
+        closeTimer = null;
+      }
+      error = err instanceof Error ? err.message : String(err);
+      if (
+        shouldRetryTransientAttempt({
+          attempt,
+          maxAttempts,
+          error,
+          sentVisibleResult: attemptSentVisibleResult,
+          observedCompletion: attemptObservedCompletion,
+        })
+      ) {
+        const delayMs = TASK_RETRY_BASE_MS * Math.pow(2, attempt - 1);
+        logger.warn(
+          { taskId: task.id, attempt, maxAttempts, delayMs, error },
+          'Scheduled task threw a transient error, retrying',
+        );
+        await wait(delayMs);
+        continue;
+      }
+      logger.error({ taskId: task.id, error, attempt }, 'Task failed');
+      break;
     }
-
-    if (output.status === 'error') {
-      error = output.error || 'Unknown error';
-    } else if (output.result) {
-      // Result was already forwarded to the user via the streaming callback above
-      result = output.result;
-    }
-
-    logger.info(
-      { taskId: task.id, durationMs: Date.now() - startTime },
-      'Task completed',
-    );
-  } catch (err) {
-    if (closeTimer) clearTimeout(closeTimer);
-    error = err instanceof Error ? err.message : String(err);
-    logger.error({ taskId: task.id, error }, 'Task failed');
   }
 
   const durationMs = Date.now() - startTime;
