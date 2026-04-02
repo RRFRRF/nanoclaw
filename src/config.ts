@@ -117,3 +117,14 @@ export const TRIGGER_PATTERN = new RegExp(
 // Uses system timezone by default
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+// Streaming configuration
+export const STREAMING_CONFIG = {
+  ENABLED: process.env.NANOCLAW_STREAMING !== 'false',
+  SHOW_THINKING: process.env.NANOCLAW_SHOW_THINKING !== 'false',
+  THINKING_COLLAPSED: process.env.NANOCLAW_THINKING_COLLAPSED === 'true',
+  SHOW_PLAN: process.env.NANOCLAW_SHOW_PLAN !== 'false',
+  SHOW_TOOLS: process.env.NANOCLAW_SHOW_TOOLS !== 'false',
+  BUFFER_SIZE: parseInt(process.env.NANOCLAW_STREAM_BUFFER_SIZE || '1000', 10),
+  MAX_EVENTS: parseInt(process.env.NANOCLAW_STREAM_MAX_EVENTS || '10000', 10),
+};
