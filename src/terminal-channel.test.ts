@@ -149,6 +149,8 @@ vi.mock('./streaming/index.js', () => ({
 import {
   TerminalChannel,
   getTerminalCompletions,
+  getTerminalCommandMenuItems,
+  applyTerminalMenuItem,
   parseTerminalCommand,
 } from './terminal-channel.js';
 import type { AgentStreamEvent } from './types.js';
@@ -223,12 +225,49 @@ describe('parseTerminalCommand', () => {
     expect(matches).toContain('repo');
   });
 
-  it('completes /new flags and returns empty for non-commands', () => {
-    expect(getTerminalCompletions('/new analyst --', [])[0]).toContain(
-      '--mount',
-    );
-    expect(getTerminalCompletions('hello', [])[0]).toEqual([]);
+  it('builds command menu items only for top-level commands', () => {
+    const commandItems = getTerminalCommandMenuItems('/sh', []);
+    expect(commandItems.some((item) => item.label === '/show-thinking')).toBe(true);
+
+    expect(getTerminalCommandMenuItems('/view-mode ', [])).toEqual([]);
   });
+
+  it('applies selected menu items into the input line', () => {
+    expect(
+      applyTerminalMenuItem('/sw', {
+        label: '/switch',
+        value: '/switch ',
+        detail: '/switch <name>',
+        description: 'attach current chat to an agent',
+        kind: 'command',
+      }),
+    ).toBe('/switch ');
+
+    expect(
+      applyTerminalMenuItem('/switch re', {
+        label: 'repo',
+        value: 'repo',
+        detail: '/switch repo',
+        description: 'local agent target',
+        kind: 'agent',
+      }),
+    ).toBe('/switch repo');
+  });
+
+  it('hides menu when command or target already exactly matches', () => {
+    expect(getTerminalCommandMenuItems('/quit', [])).toEqual([]);
+    expect(
+      getTerminalCommandMenuItems('/delete 1', [
+        {
+          jid: 'local:1',
+          name: '1',
+          folder: 'local-1',
+          active: false,
+        },
+      ]),
+    ).toEqual([]);
+  });
+
 });
 
 describe('TerminalChannel', () => {
@@ -424,7 +463,7 @@ describe('TerminalChannel', () => {
 
     await inkState.mountedProps.onSubmit('/switch two');
     expect(
-      storeState.messages.some((m) => m.text === 'Attached to two (local-two)'),
+      storeState.messages.some((m) => m.text === 'Switched to two (local-two)'),
     ).toBe(true);
 
     await inkState.mountedProps.onSubmit('/send two background task');
@@ -444,9 +483,7 @@ describe('TerminalChannel', () => {
     await channel.connect();
 
     await inkState.mountedProps.onSubmit('hello?');
-    expect(
-      storeState.messages.some((m) => m.text.includes('No agent selected.')),
-    ).toBe(true);
+    expect(storeState.context?.hint).toContain('No active agent');
 
     await inkState.mountedProps.onSubmit('/agents');
     expect(
@@ -455,7 +492,7 @@ describe('TerminalChannel', () => {
 
     await inkState.mountedProps.onSubmit('/current');
     expect(
-      storeState.messages.some((m) => m.text === 'No agent attached.'),
+      storeState.messages.some((m) => m.text === 'No active agent.'),
     ).toBe(true);
 
     await inkState.mountedProps.onSubmit('/new scout --mount /repo --rw');

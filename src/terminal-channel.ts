@@ -74,6 +74,14 @@ interface TransientStatus {
   expiresAt: number;
 }
 
+export interface TerminalCommandMenuItem {
+  label: string;
+  value: string;
+  detail: string;
+  description: string;
+  kind: 'command' | 'agent' | 'option' | 'value';
+}
+
 const COMMAND_SPECS: CommandSpec[] = [
   {
     name: '/new',
@@ -143,9 +151,7 @@ function getCommandSpec(name: string): CommandSpec | undefined {
 }
 
 function getAgentQueryOptions(agents: TerminalAgentSummary[]): string[] {
-  return [
-    ...new Set(agents.flatMap((agent) => [agent.name, agent.folder])),
-  ].sort();
+  return [...new Set(agents.flatMap((agent) => [agent.name, agent.folder]))].sort();
 }
 
 function padRight(value: string, width: number): string {
@@ -202,6 +208,74 @@ function getInlineHint(
   }
 
   return getCommandSpec(command)?.usage || 'Tab for command completion';
+}
+
+function buildCommandMenuItems(
+  line: string,
+  agents: TerminalAgentSummary[],
+): TerminalCommandMenuItem[] {
+  if (!line.startsWith('/')) return [];
+
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith('/')) return [];
+
+  const slashToken = trimmed.split(/\s+/, 1)[0] || '';
+  const hasExactCommand = COMMAND_SPECS.some((spec) => spec.name === slashToken);
+  const shouldShowTopLevelOnly = !/\s/.test(trimmed) && !hasExactCommand;
+
+  if (!shouldShowTopLevelOnly) {
+    return [];
+  }
+
+  const commandNames = COMMAND_SPECS.map((spec) => spec.name);
+  const matches = commandNames.filter((name) => name.startsWith(slashToken));
+  const names = matches.length > 0 ? matches : commandNames;
+
+  const items: TerminalCommandMenuItem[] = [];
+  for (const name of names) {
+    const spec = getCommandSpec(name);
+    if (!spec) continue;
+    items.push({
+      label: spec.name,
+      value: `${spec.name} `,
+      detail: spec.usage,
+      description: spec.description,
+      kind: 'command',
+    });
+  }
+  return items;
+}
+
+export function applyTerminalMenuItem(
+  line: string,
+  item: TerminalCommandMenuItem,
+): string {
+  if (!line.startsWith('/')) return line;
+
+  const endsWithSpace = /\s$/.test(line);
+  const tokens = tokenize(line);
+  const command = tokens[0]?.toLowerCase() || '';
+
+  if (item.kind === 'command') {
+    return item.value;
+  }
+
+  if (
+    item.kind === 'agent' ||
+    item.kind === 'option' ||
+    item.kind === 'value'
+  ) {
+    if (endsWithSpace) {
+      return `${line}${item.value}${item.kind === 'agent' ? ' ' : ''}`;
+    }
+
+    if (tokens.length === 0) return item.value;
+    tokens[tokens.length - 1] = item.value;
+    const next = tokens.join(' ');
+    return `${next}${command === '/send' && item.kind === 'agent' ? ' ' : ''}`;
+  }
+
+  return line;
 }
 
 export function parseTerminalCommand(input: string): TerminalCommand {
@@ -306,9 +380,7 @@ export function getTerminalCompletions(
 
   if (tokens.length <= 1 && !endsWithSpace) {
     const commandNames = COMMAND_SPECS.map((spec) => spec.name);
-    const matches = commandNames.filter((name) =>
-      name.startsWith(currentToken),
-    );
+    const matches = commandNames.filter((name) => name.startsWith(currentToken));
     return [matches.length > 0 ? matches : commandNames, currentToken];
   }
 
@@ -330,11 +402,26 @@ export function getTerminalCompletions(
       return [options, ''];
     }
     if (currentToken.startsWith('--')) {
-      const matches = options.filter((option) =>
-        option.startsWith(currentToken),
-      );
+      const matches = options.filter((option) => option.startsWith(currentToken));
       return [matches.length > 0 ? matches : options, currentToken];
     }
+  }
+
+  if (command === '/view-mode' && tokens.length <= 2) {
+    const options = ['smart', 'full', 'minimal'];
+    const matches = options.filter((option) => option.startsWith(currentToken));
+    return [matches.length > 0 ? matches : options, currentToken];
+  }
+
+  if (
+    (command === '/show-thinking' ||
+      command === '/show-plan' ||
+      command === '/show-tools') &&
+    tokens.length <= 2
+  ) {
+    const options = ['on', 'off'];
+    const matches = options.filter((option) => option.startsWith(currentToken));
+    return [matches.length > 0 ? matches : options, currentToken];
   }
 
   return [[], currentToken];
@@ -386,7 +473,6 @@ export class TerminalChannel implements Channel {
     if (this.connected) return;
     this.connected = true;
 
-    // Initialize stream processor
     if (STREAMING_CONFIG.ENABLED) {
       const processorOptions: ProcessOptions = resolveTerminalStreamOptions(
         'terminal',
@@ -476,9 +562,6 @@ export class TerminalChannel implements Channel {
     this.refreshInkContext();
   }
 
-  /**
-   * Handle streaming events from agent execution
-   */
   async handleStreamEvent(_jid: string, event: StreamEvent): Promise<void> {
     this.streamEvents.push(event);
 
@@ -507,8 +590,7 @@ export class TerminalChannel implements Channel {
   private getPromptStatus(current: TerminalAgentSummary | null): string {
     if (!current) return 'idle';
 
-    const runtimeStatus =
-      current.status || (current.active ? 'running' : 'idle');
+    const runtimeStatus = current.status || (current.active ? 'running' : 'idle');
     if (runtimeStatus !== 'idle') return runtimeStatus;
 
     const transient = this.transientStatuses.get(current.jid);
@@ -523,36 +605,29 @@ export class TerminalChannel implements Channel {
   private setTransientStatus(
     jid: string,
     status: string,
-    durationMs: number,
+    ttlMs: number = 4000,
   ): void {
     this.transientStatuses.set(jid, {
       status,
-      expiresAt: Date.now() + durationMs,
+      expiresAt: Date.now() + ttlMs,
     });
-  }
-
-  private agentByJid(jid: string): TerminalAgentSummary | null {
-    return this.deps.listAgents().find((agent) => agent.jid === jid) || null;
+    this.refreshInkContext();
   }
 
   private connectInkMode(): void {
+    if (this.inkApp) return;
     this.inkStore = new TerminalInkStore();
     this.inkStore.addMessage({
       id: `system-${Date.now()}`,
       label: 'system',
-      text: [
-        'NanoClaw terminal ready',
-        this.terminalOptions.logView === 'ink'
-          ? 'Ink logs mode enabled.'
-          : 'Ink chat mode enabled.',
-        this.terminalOptions.logView === 'ink'
-          ? 'All logs are shown inline for debugging.'
-          : 'Logs follow stderr.',
-      ].join('\n'),
+      text: 'Terminal mode ready. Type /help for commands.',
       tone: 'system',
     });
     this.refreshInkContext();
-    this.statusTimer = setInterval(() => this.refreshInkContext(), 300);
+
+    this.statusTimer = setInterval(() => {
+      this.refreshInkContext();
+    }, 1000);
 
     if (this.terminalOptions.logView === 'ink') {
       this.unsubscribeInkLogs = subscribeTerminalLogs((item) => {
@@ -562,235 +637,209 @@ export class TerminalChannel implements Channel {
 
     this.inkApp = mountTerminalInkApp({
       store: this.inkStore,
-      onSubmit: (line) => this.submitInkLine(line),
+      onSubmit: async (line) => {
+        await this.submitInkLine(line);
+      },
       onExit: () => {
-        this.disconnect().catch(() => undefined);
+        void this.disconnect();
       },
       getHint: (input) =>
         getInlineHint(input, this.deps.listAgents(), this.transientHint),
-      getCompletions: (input) =>
-        this.applyTerminalCompletion(input, this.deps.listAgents()),
-      getPreviousHistory: () => this.getPreviousHistoryValue(),
-      getNextHistory: () => this.getNextHistoryValue(),
+      getCompletions: (input) => this.getInkCompletions(input),
+      getPreviousHistory: () => this.previousHistory(),
+      getNextHistory: () => this.nextHistory(),
+      getCommandMenuItems: (input) =>
+        buildCommandMenuItems(input, this.deps.listAgents()),
+      applyCommandMenuItem: (input, item) =>
+        applyTerminalMenuItem(input, item),
     });
   }
 
   private pushInkLogItem(item: TerminalLogItem): void {
-    if (!this.inkStore) return;
-
-    const shouldSuppressLogText = (text: string): boolean => {
-      const trimmed = text.trim();
-      if (!trimmed) return true;
-      return (
-        trimmed === '---NANOCLAW_OUTPUT_START---' ||
-        trimmed === '---NANOCLAW_OUTPUT_END---' ||
-        trimmed.startsWith('<<<') ||
-        trimmed.startsWith('{"status":') ||
-        trimmed.startsWith('{"type":') ||
-        trimmed.startsWith('langsmith/experimental/sandbox is in alpha.') ||
-        trimmed.startsWith('[agent-runner] Received input for group:') ||
-        trimmed.startsWith('[agent-runner] Starting query') ||
-        trimmed.startsWith(
-          '[agent-runner] Query ended, waiting for next IPC message...',
-        )
-      );
-    };
-
-    if (item.type === 'text') {
-      if (shouldSuppressLogText(item.text)) return;
-      this.inkStore.addMessage({
-        id: `log-text-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        label: 'log',
-        text: item.text,
-        tone: 'system',
-      });
-      return;
-    }
-
-    const record = item.record;
-    const levelNum = typeof record.level === 'number' ? record.level : 30;
-    const level =
-      levelNum >= 60
-        ? 'fatal'
-        : levelNum >= 50
-          ? 'error'
-          : levelNum >= 40
-            ? 'warn'
-            : levelNum >= 30
-              ? 'info'
-              : 'debug';
-    const msg =
-      typeof record.msg === 'string'
-        ? record.msg
-        : typeof record.message === 'string'
-          ? record.message
-          : '';
-    const details = Object.entries(record)
-      .filter(
-        ([key]) =>
-          !['time', 'level', 'msg', 'message', 'pid', 'hostname'].includes(key),
-      )
-      .map(
-        ([key, value]) =>
-          `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`,
-      );
-    const text = [msg, ...details].filter(Boolean).join('\n');
-    if (shouldSuppressLogText(text)) return;
-    this.inkStore.addMessage({
-      id: `log-record-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      label: `log:${level}`,
-      text: text || level,
-      tone: level === 'error' || level === 'fatal' ? 'error' : 'system',
+    if (item.type !== 'text') return;
+    const current = this.currentAgent();
+    if (!current) return;
+    if (item.text.includes('[stream]') && this.streamEvents.length > 0) return;
+    this.inkStore?.addMessage({
+      id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      label: 'log',
+      text: item.text,
+      tone: 'system',
     });
-  }
-
-  private selectInitialAgent(): void {
-    const agents = this.deps.listAgents();
-    if (agents.length > 0) {
-      this.currentJid = agents[0].jid;
-    }
   }
 
   private refreshInkContext(): void {
     if (!this.inkStore) return;
     const current = this.currentAgent();
     this.inkStore.setContext({
-      agentLabel: current ? current.folder : 'no-agent',
+      agentLabel: current?.folder || 'no-agent',
       status: this.getPromptStatus(current),
       sessionId: current?.sessionId || null,
       containerName: current?.containerName || null,
-      hint: '',
+      hint: this.transientHint || undefined,
     });
   }
 
-  private applyTerminalCompletion(
-    input: string,
-    agents: TerminalAgentSummary[],
-  ): string[] {
-    const [matches, token] = getTerminalCompletions(input, agents);
+  private selectInitialAgent(): void {
+    const agents = this.deps.listAgents();
+    this.currentJid = agents[0]?.jid || null;
+  }
+
+  private agentByJid(jid: string): TerminalAgentSummary | null {
+    return this.deps.listAgents().find((agent) => agent.jid === jid) || null;
+  }
+
+  private getInkCompletions(line: string): string[] {
+    const [matches, currentToken] = getTerminalCompletions(
+      line,
+      this.deps.listAgents(),
+    );
+    if (!line.startsWith('/')) return [];
     if (matches.length === 0) return [];
 
-    const prefixText = input.slice(0, input.length - token.length);
+    const trimmed = /\s$/.test(line)
+      ? line
+      : line.slice(0, Math.max(0, line.length - currentToken.length));
+
     return matches.map((match) => {
-      const completed = `${prefixText}${match}`;
-      return matches.length === 1 ? `${completed} ` : completed;
+      if (trimmed.endsWith(' ') || trimmed.length === 0) {
+        return `${trimmed}${match}`;
+      }
+      return `${trimmed}${match}`;
     });
   }
 
-  private getPreviousHistoryValue(): string | null {
+  private previousHistory(): string | null {
     if (this.history.length === 0) return null;
+
     if (this.historyIndex === null) {
       this.historyDraft = '';
-      this.historyIndex = this.history.length;
+      this.historyIndex = this.history.length - 1;
+      return this.history[this.historyIndex];
     }
-    this.historyIndex = Math.max(0, this.historyIndex - 1);
+
+    if (this.historyIndex <= 0) {
+      this.historyIndex = 0;
+      return this.history[0];
+    }
+
+    this.historyIndex -= 1;
     return this.history[this.historyIndex];
   }
 
-  private getNextHistoryValue(): string | null {
-    if (this.history.length === 0) return null;
-    if (this.historyIndex === null) return '';
-    this.historyIndex = Math.min(this.history.length, this.historyIndex + 1);
-    if (this.historyIndex === this.history.length) {
+  private nextHistory(): string | null {
+    if (this.historyIndex === null) return null;
+
+    if (this.historyIndex >= this.history.length - 1) {
+      this.historyIndex = null;
       return this.historyDraft;
     }
+
+    this.historyIndex += 1;
     return this.history[this.historyIndex];
+  }
+
+  private rememberHistory(line: string): void {
+    if (!line.trim()) return;
+    if (this.history[this.history.length - 1] !== line) {
+      this.history.push(line);
+    }
+    this.historyIndex = null;
+    this.historyDraft = '';
   }
 
   private async submitInkLine(line: string): Promise<void> {
-    const trimmed = line.trim();
-    this.historyIndex = null;
-    this.historyDraft = '';
-    if (!trimmed) return;
-    this.history.push(trimmed);
-    if (this.history.length > 100) {
-      this.history = this.history.slice(-100);
+    this.transientHint = null;
+    this.rememberHistory(line);
+
+    if (isStreamCommand(line)) {
+      if (this.inkStore && handleStreamCommand(line, this.inkStore)) {
+        this.refreshInkContext();
+        return;
+      }
     }
 
-    if (trimmed.startsWith('/')) {
-      if (this.inkStore && isStreamCommand(trimmed)) {
-        const handled = handleStreamCommand(trimmed, this.inkStore);
-        if (handled) {
-          this.refreshInkContext();
-          return;
-        }
-      }
-
-      const command = parseTerminalCommand(trimmed);
-      await this.handleInkCommand(command);
+    if (line.startsWith('/')) {
+      const command = parseTerminalCommand(line);
+      await this.handleInkCommand(command, line);
       this.refreshInkContext();
       return;
     }
 
     const current = this.currentAgent();
     if (!current) {
-      this.inkStore?.addMessage({
-        id: `system-${Date.now()}`,
-        label: 'system',
-        text: 'No agent selected. Create one with /new <agent-name>.',
-        tone: 'system',
-      });
+      this.transientHint = 'No active agent. Use /new or /switch first.';
       this.refreshInkContext();
       return;
     }
 
-    this.inkStore?.flushLiveMessage();
     this.inkStore?.addMessage({
       id: `user-${Date.now()}`,
-      label: `you -> ${current.name}`,
-      text: trimmed,
+      label: 'you',
+      text: line,
       tone: 'user',
     });
-    this.emitMessage(current, trimmed);
+
+    const localMessage = createLocalMessage(current.jid, line);
+    this.deps.onChatMetadata(
+      current.jid,
+      localMessage.timestamp,
+      current.name,
+      'terminal',
+      false,
+    );
+    this.deps.onMessage(current.jid, localMessage);
+    this.setTransientStatus(current.jid, 'submitted', 4000);
     this.refreshInkContext();
   }
 
-  private async handleInkCommand(command: TerminalCommand): Promise<void> {
+  private async handleInkCommand(
+    command: TerminalCommand,
+    original: string,
+  ): Promise<void> {
     switch (command.type) {
-      case 'help':
-        this.inkStore?.flushLiveMessage();
+      case 'help': {
         this.inkStore?.addMessage({
           id: `system-${Date.now()}`,
           label: 'system',
-          text: COMMAND_SPECS.map(
-            (spec) =>
-              `${padRight(spec.name, 9)} ${padRight(spec.usage, 36)} ${spec.description}`,
-          ).join('\n'),
+          text: COMMAND_SPECS.map((spec) => {
+            return `${padRight(spec.name, 18)} ${spec.usage} — ${spec.description}`;
+          }).join('\n'),
           tone: 'system',
         });
         return;
-
+      }
       case 'agents': {
         const agents = this.deps.listAgents();
-        this.inkStore?.flushLiveMessage();
         this.inkStore?.addMessage({
           id: `system-${Date.now()}`,
           label: 'system',
           text:
-            agents.length > 0
-              ? agents
+            agents.length === 0
+              ? 'No local agents.'
+              : agents
                   .map((agent) => formatAgentLine(agent, this.currentJid))
-                  .join('\n')
-              : 'No local agents. Create one with /new <agent-name>.',
+                  .join('\n'),
           tone: 'system',
         });
         return;
       }
-
       case 'current': {
         const current = this.currentAgent();
-        this.inkStore?.flushLiveMessage();
         this.inkStore?.addMessage({
           id: `system-${Date.now()}`,
           label: 'system',
           text: current
-            ? `Current agent: ${current.name} (${current.folder})`
-            : 'No agent attached.',
+            ? formatAgentLine(current, this.currentJid)
+            : 'No active agent.',
           tone: 'system',
         });
         return;
       }
-
+      case 'quit': {
+        await this.disconnect();
+        process.exit(0);
+      }
       case 'new': {
         const result = this.deps.createAgent({
           name: command.name,
@@ -798,26 +847,23 @@ export class TerminalChannel implements Channel {
           readWrite: command.readWrite,
         });
         this.currentJid = result.agent.jid;
-        this.inkStore?.flushLiveMessage();
         this.inkStore?.addMessage({
           id: `system-${Date.now()}`,
           label: 'system',
           text: result.created
             ? `Created agent ${result.agent.name} (${result.agent.folder})`
-            : `Attached to existing agent ${result.agent.name} (${result.agent.folder})`,
+            : `Updated agent ${result.agent.name} (${result.agent.folder})`,
           tone: 'system',
         });
         return;
       }
-
       case 'switch': {
         const agent = this.deps.resolveAgent(command.target);
-        this.inkStore?.flushLiveMessage();
         if (!agent) {
           this.inkStore?.addMessage({
             id: `error-${Date.now()}`,
             label: 'error',
-            text: `Agent not found: ${command.target}`,
+            text: `Unknown agent: ${command.target}`,
             tone: 'error',
           });
           return;
@@ -826,86 +872,90 @@ export class TerminalChannel implements Channel {
         this.inkStore?.addMessage({
           id: `system-${Date.now()}`,
           label: 'system',
-          text: `Attached to ${agent.name} (${agent.folder})`,
+          text: `Switched to ${agent.name} (${agent.folder})`,
           tone: 'system',
         });
         return;
       }
-
       case 'delete': {
-        this.inkStore?.flushLiveMessage();
         const deleted = this.deps.deleteAgent(command.target);
         if (!deleted) {
           this.inkStore?.addMessage({
             id: `error-${Date.now()}`,
             label: 'error',
-            text: `Agent not found: ${command.target}`,
+            text: `Unknown agent: ${command.target}`,
             tone: 'error',
           });
           return;
         }
         if (this.currentJid === deleted.agent.jid) {
-          this.currentJid = null;
           this.selectInitialAgent();
         }
         this.inkStore?.addMessage({
           id: `system-${Date.now()}`,
           label: 'system',
-          text: `Deleted agent ${deleted.agent.name} (${deleted.agent.folder})`,
+          text: `Deleted agent ${deleted.agent.name}`,
           tone: 'system',
         });
         return;
       }
-
       case 'send': {
         const agent = this.deps.resolveAgent(command.target);
-        this.inkStore?.flushLiveMessage();
         if (!agent) {
           this.inkStore?.addMessage({
             id: `error-${Date.now()}`,
             label: 'error',
-            text: `Agent not found: ${command.target}`,
+            text: `Unknown agent: ${command.target}`,
             tone: 'error',
           });
           return;
         }
+        const localMessage = createLocalMessage(agent.jid, command.message);
         this.inkStore?.addMessage({
           id: `user-${Date.now()}`,
           label: `you -> ${agent.name}`,
           text: command.message,
           tone: 'user',
         });
-        this.emitMessage(agent, command.message);
+        this.deps.onChatMetadata(
+          agent.jid,
+          localMessage.timestamp,
+          agent.name,
+          'terminal',
+          false,
+        );
+        this.deps.onMessage(agent.jid, localMessage);
+        this.setTransientStatus(agent.jid, 'submitted', 4000);
         return;
       }
-
-      case 'quit':
-        await this.disconnect();
-        process.exit(0);
-        return;
-
       case 'unknown':
-        this.inkStore?.flushLiveMessage();
+      default: {
         this.inkStore?.addMessage({
           id: `error-${Date.now()}`,
           label: 'error',
-          text: command.message,
+          text: command.type === 'unknown' ? command.message : original,
           tone: 'error',
         });
-        return;
+      }
     }
   }
+}
 
-  private emitMessage(agent: TerminalAgentSummary, text: string): void {
-    this.setTransientStatus(agent.jid, 'running', 15000);
-    const timestamp = new Date().toISOString();
-    this.deps.onChatMetadata(
-      agent.jid,
-      timestamp,
-      agent.name,
-      'terminal',
-      false,
-    );
-    this.deps.onMessage(agent.jid, createLocalMessage(agent.jid, text));
-  }
+export function getTerminalCommandMenuItems(
+  line: string,
+  agents: TerminalAgentSummary[],
+): TerminalCommandMenuItem[] {
+  return buildCommandMenuItems(line, agents);
+}
+
+export function getTerminalHint(
+  input: string,
+  agents: TerminalAgentSummary[],
+  transientHint?: string | null,
+): string {
+  return getInlineHint(input, agents, transientHint);
+}
+
+export function getSharedCompletionPrefix(values: string[]): string {
+  return commonPrefix(values);
 }

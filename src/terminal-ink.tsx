@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Box, render, Static, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
+import type { TerminalCommandMenuItem } from './terminal-channel.js';
 
 export type InkMessageTone = 'user' | 'agent' | 'system' | 'error' | 'status';
 
@@ -35,6 +36,11 @@ interface InkAppProps {
   getCompletions: (input: string) => string[];
   getPreviousHistory: () => string | null;
   getNextHistory: () => string | null;
+  getCommandMenuItems: (input: string) => TerminalCommandMenuItem[];
+  applyCommandMenuItem: (
+    input: string,
+    item: TerminalCommandMenuItem,
+  ) => string;
 }
 
 type Listener = () => void;
@@ -85,22 +91,155 @@ function MessageBlock({ message }: { message: InkMessage }): React.JSX.Element {
   );
 }
 
+function StatusPill({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <Text>
+      <Text color="gray">{label} </Text>
+      <Text color={color} bold>
+        {value}
+      </Text>
+    </Text>
+  );
+}
+
+function CommandMenu({
+  items,
+  selectedIndex,
+}: {
+  items: TerminalCommandMenuItem[];
+  selectedIndex: number;
+}): React.JSX.Element | null {
+  if (items.length === 0) return null;
+  const maxVisible = 6;
+  const windowStart = Math.max(
+    0,
+    Math.min(selectedIndex - Math.floor(maxVisible / 2), items.length - maxVisible),
+  );
+  const visibleItems = items.slice(windowStart, windowStart + maxVisible);
+  const windowEnd = windowStart + visibleItems.length;
+
+  return (
+    <Box
+      flexDirection="column"
+      marginTop={1}
+      borderStyle="round"
+      borderColor="gray"
+      paddingX={1}
+    >
+      <Text color="gray">
+        Commands {selectedIndex + 1}/{items.length}
+      </Text>
+      {windowStart > 0 ? <Text color="gray">↑ more</Text> : null}
+      {visibleItems.map((item, index) => {
+        const actualIndex = windowStart + index;
+        const selected = actualIndex === selectedIndex;
+        return (
+          <Box key={`${item.kind}-${item.label}-${actualIndex}`}>
+            <Text
+              color={selected ? 'black' : 'cyan'}
+              backgroundColor={selected ? 'cyan' : undefined}
+            >
+              {item.label}
+            </Text>
+            <Text color="gray">  {item.detail}</Text>
+            {item.description ? (
+              <Text color="gray"> — {item.description}</Text>
+            ) : null}
+          </Box>
+        );
+      })}
+      {windowEnd < items.length ? <Text color="gray">↓ more</Text> : null}
+    </Box>
+  );
+}
+
 function TerminalInkApp(props: InkAppProps): React.JSX.Element {
   const { exit } = useApp();
   const [snapshot, setSnapshot] = useState<InkSnapshot>(props.store.getSnapshot());
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [completionHint, setCompletionHint] = useState('');
+  const [selectedMenuIndex, setSelectedMenuIndex] = useState(0);
 
   useEffect(() => props.store.subscribe(() => setSnapshot(props.store.getSnapshot())), [
     props.store,
   ]);
+
+  const commandMenuItems = useMemo(
+    () => (busy ? [] : props.getCommandMenuItems(input)),
+    [busy, input, props],
+  );
+
+  useEffect(() => {
+    if (commandMenuItems.length === 0) {
+      setSelectedMenuIndex(0);
+      return;
+    }
+    setSelectedMenuIndex((current) => Math.min(current, commandMenuItems.length - 1));
+  }, [commandMenuItems]);
+
+  const getSelectedMenuApplication = () => {
+    const item = commandMenuItems[selectedMenuIndex];
+    if (!item) return null;
+    const nextInput = props.applyCommandMenuItem(input, item);
+    return { item, nextInput, changed: nextInput !== input };
+  };
+
+  const shouldSubmitSlashCommand = () => {
+    if (!input.startsWith('/')) return false;
+    const trimmed = input.trim();
+    if (!trimmed || trimmed === '/') return false;
+    return commandMenuItems.length === 0;
+  };
 
   useInput((_input, key) => {
     if (key.ctrl && _input === 'c') {
       props.onExit();
       exit();
       return;
+    }
+
+    if (commandMenuItems.length > 0) {
+      if (key.escape) {
+        setSelectedMenuIndex(0);
+        setCompletionHint('');
+        return;
+      }
+
+      if (key.upArrow) {
+        setSelectedMenuIndex((current) =>
+          current <= 0 ? commandMenuItems.length - 1 : current - 1,
+        );
+        return;
+      }
+
+      if (key.downArrow) {
+        setSelectedMenuIndex((current) => (current + 1) % commandMenuItems.length);
+        return;
+      }
+
+      if (key.tab) {
+        const selection = getSelectedMenuApplication();
+        if (selection) {
+          setInput(selection.nextInput);
+          setSelectedMenuIndex(0);
+          setCompletionHint('');
+          return;
+        }
+      }
+
+      if (key.return) {
+        if (shouldSubmitSlashCommand()) {
+          return;
+        }
+        const selection = getSelectedMenuApplication();
+        if (selection?.changed) {
+          setInput(selection.nextInput);
+          setSelectedMenuIndex(0);
+          setCompletionHint('');
+          return;
+        }
+      }
     }
 
     if (key.upArrow) {
@@ -147,23 +286,30 @@ function TerminalInkApp(props: InkAppProps): React.JSX.Element {
     }
   });
 
-  const hint = useMemo(
-    () => completionHint || props.getHint(input) || snapshot.context.hint || '',
-    [completionHint, input, props, snapshot.context.hint],
-  );
+  const selectedMenuItem = commandMenuItems[selectedMenuIndex];
+  const hint = useMemo(() => {
+    if (selectedMenuItem) {
+      return `${selectedMenuItem.detail}${selectedMenuItem.description ? ` — ${selectedMenuItem.description}` : ''} · Enter 应用，再次 Enter 发送`;
+    }
+    return completionHint || props.getHint(input) || snapshot.context.hint || '';
+  }, [completionHint, input, props, selectedMenuItem, snapshot.context.hint]);
 
   const submit = async (value: string) => {
     const line = value.trim();
-    setInput('');
     setCompletionHint('');
     if (!line || busy) return;
+    if (line === '/') return;
     setBusy(true);
     try {
       await props.onSubmit(line);
+      setInput('');
+      setSelectedMenuIndex(0);
     } finally {
       setBusy(false);
     }
   };
+
+  const statusColor = snapshot.context.status === 'idle' ? 'yellow' : 'green';
 
   return (
     <Box flexDirection="column">
@@ -174,15 +320,22 @@ function TerminalInkApp(props: InkAppProps): React.JSX.Element {
       {snapshot.liveMessage ? <MessageBlock message={snapshot.liveMessage} /> : null}
 
       <Box flexDirection="column" marginTop={0}>
-        <Text color="gray">
-          agent {snapshot.context.agentLabel}  status {snapshot.context.status}
-          {'  '}session {snapshot.context.sessionId || '-'}
-          {'  '}container {snapshot.context.containerName || '-'}
-        </Text>
-        <Box>
-          <Text color="cyan">{'> '}</Text>
-          <TextInput value={input} onChange={setInput} onSubmit={submit} />
+        <Box gap={2}>
+          <StatusPill label="agent" value={snapshot.context.agentLabel} color="cyan" />
+          <StatusPill label="status" value={snapshot.context.status} color={statusColor} />
+          <StatusPill label="session" value={snapshot.context.sessionId || '-'} color="magenta" />
+          <StatusPill label="container" value={snapshot.context.containerName || '-'} color="blue" />
         </Box>
+        <Box marginTop={1}>
+          <Text color={input.startsWith('/') ? 'yellow' : 'cyan'}>{'> '}</Text>
+          <TextInput
+            key={input}
+            value={input}
+            onChange={setInput}
+            onSubmit={submit}
+          />
+        </Box>
+        <CommandMenu items={commandMenuItems} selectedIndex={selectedMenuIndex} />
         <Text color="gray">{hint}</Text>
       </Box>
     </Box>
