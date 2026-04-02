@@ -1,6 +1,6 @@
 # NanoHarness
 
-Personal agent harness forked from NanoClaw. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
+Personal agent harness for long-running tasks. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
 
 ## Quick Context
 
@@ -18,8 +18,39 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `src/container-runner.ts` | Spawns agent containers with mounts |
 | `src/task-scheduler.ts` | Runs scheduled tasks |
 | `src/db.ts` | SQLite operations |
+| `src/streaming/` | Real-time streaming output system |
+| `src/compact/` | Context compression for long conversations |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
 | `container/skills/` | Skills loaded inside agent containers (browser, status, formatting) |
+
+## Streaming Output
+
+NanoHarness includes a production-grade streaming output system for real-time visibility into agent execution:
+
+- **Thinking process** - See agent's reasoning in real-time
+- **Execution plan** - Visualize multi-step plans with progress
+- **Tool calls** - Watch tools execute with live progress updates
+- **Smart filtering** - Hide system logs, show only relevant information
+
+Configure via environment variables (see `.env.example`):
+- `NANOCLAW_STREAMING` - Enable/disable streaming
+- `NANOCLAW_SHOW_THINKING` - Show/hide thinking process
+- `NANOCLAW_SHOW_PLAN` - Show/hide execution plan
+- `NANOCLAW_SHOW_TOOLS` - Show/hide tool calls
+
+Or use Terminal commands:
+- `/view-mode <smart|full|minimal>` - Switch display mode
+- `/show-thinking <on|off>` - Toggle thinking display
+- `/collapse-thinking` - Fold thinking content
+
+## Context Compression
+
+For long-running tasks, NanoHarness includes intelligent context compression:
+
+- **4-level compression** - Snip → Summarize → Collapse → Archive
+- **Automatic triggering** - Based on token thresholds
+- **Value-based preservation** - Keeps user intent, decisions, artifacts
+- **Session recovery** - Archives can be restored on demand
 
 ## Skills
 
@@ -35,7 +66,7 @@ Four types of skills exist in NanoHarness. See [CONTRIBUTING.md](CONTRIBUTING.md
 | `/setup` | First-time installation, authentication, service configuration |
 | `/customize` | Adding channels, integrations, changing behavior |
 | `/debug` | Container issues, logs, troubleshooting |
-| `/update-nanoclaw` | Bring upstream NanoClaw updates into this customized fork |
+| `/update` | Bring upstream updates into this fork |
 | `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch |
 | `/get-qodo-rules` | Load org- and repo-level coding rules from Qodo before code tasks |
 
@@ -50,6 +81,7 @@ Run commands directly—don't tell the user to run them.
 ```bash
 npm run dev          # Run with hot reload
 npm run build        # Compile TypeScript
+npm test             # Run all tests
 ./container/build.sh # Rebuild agent container
 ```
 
@@ -69,6 +101,14 @@ systemctl --user restart nanoharness
 ## Troubleshooting
 
 **WhatsApp not connecting after upgrade:** WhatsApp is now a separate skill, not bundled in core. Run `/add-whatsapp` (or `npx tsx scripts/apply-skill.ts .claude/skills/add-whatsapp && npm run build`) to install it. Existing auth credentials and groups are preserved.
+
+**Container build cache issues:** The container buildkit caches aggressively. `--no-cache` alone does NOT invalidate COPY steps. To force a clean rebuild:
+```bash
+docker builder prune -f
+./container/build.sh
+```
+
+**Streaming output not showing:** Check that `NANOCLAW_STREAMING=true` is set (enabled by default). Use `/view-mode full` in Terminal to see all events.
 
 ## Container Build Cache
 
