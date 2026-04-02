@@ -63,7 +63,9 @@ export function mapStreamEventToRenderItems(
         };
         const parts = [
           typeof data?.name === 'string' && data.name ? data.name : null,
-          typeof data?.message === 'string' && data.message ? data.message : null,
+          typeof data?.message === 'string' && data.message
+            ? data.message
+            : null,
           typeof data?.percent === 'number' ? `${data.percent}%` : null,
         ].filter(Boolean);
         if (parts.length > 0) {

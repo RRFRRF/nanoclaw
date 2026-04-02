@@ -36,7 +36,11 @@ export function classifyRetryError(error?: string | null): RetryErrorKind {
   if (/(tool|mcp).*(failed|error)/i.test(error)) {
     return 'tool-failure';
   }
-  if (/(container spawn error|container exited with code|container timed out)/i.test(error)) {
+  if (
+    /(container spawn error|container exited with code|container timed out)/i.test(
+      error,
+    )
+  ) {
     return 'container-failure';
   }
   if (isTransientProviderError(error)) {
