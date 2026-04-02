@@ -2,7 +2,11 @@ import { mountTerminalInkApp, TerminalInkStore } from './terminal-ink.js';
 import { subscribeTerminalLogs, TerminalLogItem } from './terminal-log-sink.js';
 import { getTerminalOptions } from './terminal-options.js';
 import { AgentStreamEvent, Channel, NewMessage } from './types.js';
-import { StreamEvent, StreamProcessor, ProcessOptions } from './streaming/index.js';
+import {
+  StreamEvent,
+  StreamProcessor,
+  ProcessOptions,
+} from './streaming/index.js';
 import {
   handleStreamCommand,
   isStreamCommand,
@@ -512,7 +516,10 @@ export class TerminalChannel implements Channel {
     const current = this.currentAgent();
     const label = current ? current.name : 'agent';
     const streamConfig = getStreamConfig();
-    const pushSystemMessage = (text: string | null | undefined, tone: 'system' | 'error' = 'system') => {
+    const pushSystemMessage = (
+      text: string | null | undefined,
+      tone: 'system' | 'error' = 'system',
+    ) => {
       if (!text) return;
       this.inkStore?.addMessage({
         id: `${event.type}-${event.timestamp}-${Math.random().toString(36).slice(2, 6)}`,
@@ -546,10 +553,16 @@ export class TerminalChannel implements Channel {
       }
       case 'tool_progress': {
         if (streamConfig.showTools) {
-          const data = event.data as { name?: string; message?: string; percent?: number };
+          const data = event.data as {
+            name?: string;
+            message?: string;
+            percent?: number;
+          };
           const parts = [
             typeof data?.name === 'string' && data.name ? data.name : null,
-            typeof data?.message === 'string' && data.message ? data.message : null,
+            typeof data?.message === 'string' && data.message
+              ? data.message
+              : null,
             typeof data?.percent === 'number' ? `${data.percent}%` : null,
           ].filter(Boolean);
           if (parts.length > 0) {
@@ -562,7 +575,8 @@ export class TerminalChannel implements Channel {
         if (streamConfig.showTools) {
           const data = event.data as { name?: string; duration?: number };
           if (typeof data?.name === 'string' && data.name) {
-            const duration = typeof data.duration === 'number' ? ` (${data.duration}ms)` : '';
+            const duration =
+              typeof data.duration === 'number' ? ` (${data.duration}ms)` : '';
             pushSystemMessage(`✓ ${data.name}${duration}`);
           }
         }
@@ -581,10 +595,16 @@ export class TerminalChannel implements Channel {
       }
       case 'plan': {
         if (streamConfig.showPlan) {
-          const data = event.data as { steps?: Array<{ description?: string }> };
+          const data = event.data as {
+            steps?: Array<{ description?: string }>;
+          };
           const steps = Array.isArray(data?.steps)
             ? data.steps
-                .map((step) => (typeof step?.description === 'string' ? step.description : null))
+                .map((step) =>
+                  typeof step?.description === 'string'
+                    ? step.description
+                    : null,
+                )
                 .filter(Boolean)
             : [];
           if (steps.length > 0) {
@@ -595,7 +615,12 @@ export class TerminalChannel implements Channel {
       }
       case 'plan_step': {
         if (streamConfig.showPlan) {
-          const data = event.data as { status?: string; progress?: number; message?: string; stepId?: string };
+          const data = event.data as {
+            status?: string;
+            progress?: number;
+            message?: string;
+            stepId?: string;
+          };
           const parts = [
             typeof data?.stepId === 'string' ? data.stepId : null,
             typeof data?.status === 'string' ? data.status : null,
@@ -622,13 +647,20 @@ export class TerminalChannel implements Channel {
         break;
       }
       case 'error': {
-        const data = event.data as { message?: string; error?: string; details?: unknown };
+        const data = event.data as {
+          message?: string;
+          error?: string;
+          details?: unknown;
+        };
         const text =
           (typeof data?.message === 'string' && data.message) ||
           (typeof data?.error === 'string' && data.error) ||
           (typeof data?.details === 'string' && data.details) ||
           null;
-        pushSystemMessage(text ?? JSON.stringify(event.data ?? 'Unknown streaming error'), 'error');
+        pushSystemMessage(
+          text ?? JSON.stringify(event.data ?? 'Unknown streaming error'),
+          'error',
+        );
         break;
       }
       case 'complete':
@@ -730,7 +762,9 @@ export class TerminalChannel implements Channel {
         trimmed.startsWith('langsmith/experimental/sandbox is in alpha.') ||
         trimmed.startsWith('[agent-runner] Received input for group:') ||
         trimmed.startsWith('[agent-runner] Starting query') ||
-        trimmed.startsWith('[agent-runner] Query ended, waiting for next IPC message...')
+        trimmed.startsWith(
+          '[agent-runner] Query ended, waiting for next IPC message...',
+        )
       );
     };
 

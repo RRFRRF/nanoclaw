@@ -4,10 +4,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { StreamProcessor, ProcessOptions } from '../processor.js';
-import {
-  PlanStep,
-  StepStatus,
-} from '../types.js';
+import { PlanStep, StepStatus } from '../types.js';
 
 // Helper to create raw stream chunks with markers
 function createEventChunk(type: string, data: unknown): string {
@@ -16,32 +13,32 @@ function createEventChunk(type: string, data: unknown): string {
     timestamp: '2024-01-01T00:00:00Z',
     data,
   };
-  
+
   // Map event types to their marker names (for single-line markers)
   const singleLineMarkers: Record<string, string> = {
-    'plan_step': 'STEP:',
-    'tool_start': 'TOOL:',
-    'tool_progress': 'PROGRESS:',
-    'tool_complete': 'TOOL_COMPLETE>>>',
-    'decision': 'DECISION>>>',
-    'complete': 'COMPLETE>>>',
-    'error': 'ERROR>>>',
+    plan_step: 'STEP:',
+    tool_start: 'TOOL:',
+    tool_progress: 'PROGRESS:',
+    tool_complete: 'TOOL_COMPLETE>>>',
+    decision: 'DECISION>>>',
+    complete: 'COMPLETE>>>',
+    error: 'ERROR>>>',
   };
-  
+
   // For block-based events (thinking, plan, content), we need end markers
   const needsEndMarker = ['thinking', 'plan', 'content'].includes(type);
-  
+
   if (needsEndMarker) {
     return `<<<${type.toUpperCase()}>>>
 ${JSON.stringify(event)}
 <<<${type.toUpperCase()}_END>>>`;
   }
-  
+
   // For single-line markers
   if (singleLineMarkers[type]) {
     return `<<<${singleLineMarkers[type]}${JSON.stringify(event)}`;
   }
-  
+
   // Default case
   return `<<<${type.toUpperCase()}>>>${JSON.stringify(event)}`;
 }
@@ -84,12 +81,21 @@ describe('StreamProcessor', () => {
     });
 
     it('should process tool events', () => {
-      const startChunk = createEventChunk('tool_start', { toolId: 't1', name: 'test_tool', input: {} });
+      const startChunk = createEventChunk('tool_start', {
+        toolId: 't1',
+        name: 'test_tool',
+        input: {},
+      });
 
       processor.processChunk(startChunk);
       expect(processor.getActiveTools()).toHaveLength(1);
 
-      const completeChunk = createEventChunk('tool_complete', { toolId: 't1', name: 'test_tool', duration: 100, result: null });
+      const completeChunk = createEventChunk('tool_complete', {
+        toolId: 't1',
+        name: 'test_tool',
+        duration: 100,
+        result: null,
+      });
 
       processor.processChunk(completeChunk);
       expect(processor.getActiveTools()).toHaveLength(0);
@@ -111,14 +117,27 @@ describe('StreamProcessor', () => {
     });
 
     it('should track active tool', () => {
-      processor.processChunk(createEventChunk('tool_start', { toolId: 't1', name: 'active_tool', input: {} }));
+      processor.processChunk(
+        createEventChunk('tool_start', {
+          toolId: 't1',
+          name: 'active_tool',
+          input: {},
+        }),
+      );
 
       const status = processor.getCurrentStatus();
       expect(status.activeTool).toBe('active_tool');
     });
 
     it('should track progress', () => {
-      processor.processChunk(createEventChunk('tool_progress', { toolId: 't1', name: 'tool', message: 'Progress', percent: 75 }));
+      processor.processChunk(
+        createEventChunk('tool_progress', {
+          toolId: 't1',
+          name: 'tool',
+          message: 'Progress',
+          percent: 75,
+        }),
+      );
 
       const status = processor.getCurrentStatus();
       expect(status.progress).toBe(75);
@@ -132,7 +151,9 @@ describe('StreamProcessor', () => {
     });
 
     it('should track errors', () => {
-      processor.processChunk(createEventChunk('error', { message: 'Test error' }));
+      processor.processChunk(
+        createEventChunk('error', { message: 'Test error' }),
+      );
 
       expect(processor.hasError()).toBe(true);
       expect(processor.getCurrentStatus().hasError).toBe(true);
@@ -148,7 +169,13 @@ describe('StreamProcessor', () => {
 
       processor.processChunk(createEventChunk('plan', { steps }));
 
-      processor.processChunk(createEventChunk('plan_step', { stepId: '1', status: 'completed', plan: steps }));
+      processor.processChunk(
+        createEventChunk('plan_step', {
+          stepId: '1',
+          status: 'completed',
+          plan: steps,
+        }),
+      );
 
       const plan = processor.getPlan();
       expect(plan[0].status).toBe('completed');
@@ -200,7 +227,11 @@ describe('StreamProcessor', () => {
         showTools: false,
       });
 
-      const chunk = createEventChunk('tool_start', { toolId: 't1', name: 'tool', input: {} });
+      const chunk = createEventChunk('tool_start', {
+        toolId: 't1',
+        name: 'tool',
+        input: {},
+      });
 
       const events = filteredProcessor.processChunk(chunk);
       expect(events).toHaveLength(0);
@@ -269,7 +300,9 @@ describe('StreamProcessor', () => {
       });
 
       for (let i = 0; i < 10; i++) {
-        limitedProcessor.processChunk(createEventChunk('thinking', { content: `test ${i}` }));
+        limitedProcessor.processChunk(
+          createEventChunk('thinking', { content: `test ${i}` }),
+        );
       }
 
       expect(limitedProcessor.getEvents()).toHaveLength(5);
@@ -277,7 +310,9 @@ describe('StreamProcessor', () => {
 
     it('should get recent events', () => {
       for (let i = 0; i < 5; i++) {
-        processor.processChunk(createEventChunk('thinking', { content: `test ${i}` }));
+        processor.processChunk(
+          createEventChunk('thinking', { content: `test ${i}` }),
+        );
       }
 
       const recent = processor.getRecentEvents(3);
@@ -288,7 +323,9 @@ describe('StreamProcessor', () => {
   describe('statistics', () => {
     it('should track event counts by type', () => {
       processor.processChunk(createEventChunk('thinking', { content: 'test' }));
-      processor.processChunk(createEventChunk('thinking', { content: 'test2' }));
+      processor.processChunk(
+        createEventChunk('thinking', { content: 'test2' }),
+      );
       processor.processChunk(createEventChunk('complete', {}));
 
       const stats = processor.getStats();
@@ -315,8 +352,18 @@ describe('StreamProcessor', () => {
 
   describe('resource cleanup', () => {
     it('should clear all state', () => {
-      processor.processChunk(createEventChunk('plan', { steps: [{ id: '1', description: 'Step', status: 'pending' }] }));
-      processor.processChunk(createEventChunk('tool_start', { toolId: 't1', name: 'tool', input: {} }));
+      processor.processChunk(
+        createEventChunk('plan', {
+          steps: [{ id: '1', description: 'Step', status: 'pending' }],
+        }),
+      );
+      processor.processChunk(
+        createEventChunk('tool_start', {
+          toolId: 't1',
+          name: 'tool',
+          input: {},
+        }),
+      );
 
       processor.clear();
 

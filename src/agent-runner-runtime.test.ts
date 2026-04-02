@@ -79,7 +79,10 @@ const mcpState = vi.hoisted(() => ({
 }));
 
 const toolState = vi.hoisted(() => ({
-  registrations: [] as Array<{ fn: (...args: any[]) => any; meta: Record<string, any> }>,
+  registrations: [] as Array<{
+    fn: (...args: any[]) => any;
+    meta: Record<string, any>;
+  }>,
 }));
 
 vi.mock('fs', async () => {
@@ -221,7 +224,10 @@ describe('agent runner runtime diagnostics', () => {
         env?: Record<string, string>;
       }>;
       renderMcpToolResult: (result: Record<string, unknown>) => string;
-      validateScheduleValue: (scheduleType: 'cron' | 'interval' | 'once', scheduleValue: string) => string | null;
+      validateScheduleValue: (
+        scheduleType: 'cron' | 'interval' | 'once',
+        scheduleValue: string,
+      ) => string | null;
       createNanoClawTools: (
         containerInput: {
           prompt: string;
@@ -231,7 +237,9 @@ describe('agent runner runtime diagnostics', () => {
         },
         emitStatus: (text: string, replace?: boolean) => void,
       ) => any[];
-      loadConfiguredMcpTools: (emitStatus: (text: string, replace?: boolean) => void) => Promise<{
+      loadConfiguredMcpTools: (
+        emitStatus: (text: string, replace?: boolean) => void,
+      ) => Promise<{
         tools: any[];
         cleanup: () => Promise<void>;
         servers: Array<{ name: string }>;
@@ -368,7 +376,12 @@ describe('agent runner runtime diagnostics', () => {
         JSON.stringify([
           null,
           { name: '', command: 'node' },
-          { name: 'ok', command: 'node', args: ['server.js'], env: { A: '1', B: 2 } },
+          {
+            name: 'ok',
+            command: 'node',
+            args: ['server.js'],
+            env: { A: '1', B: 2 },
+          },
         ]),
       ),
     ).toEqual([
@@ -382,7 +395,6 @@ describe('agent runner runtime diagnostics', () => {
 
     expect(mod.parseConfiguredMcpServers('{bad json')).toEqual([]);
   });
-
 
   it('validates auto-continue reasons across delegation, status, and limits', async () => {
     const mod = await loadRuntimeModule();
@@ -448,8 +460,6 @@ describe('agent runner runtime diagnostics', () => {
     ).toBeNull();
   });
 
-
-
   it('renders MCP tool results from text, links, and structured content', async () => {
     const mod = await loadRuntimeModule();
 
@@ -477,16 +487,18 @@ describe('agent runner runtime diagnostics', () => {
     );
   });
 
-
-
   it('validates schedule values across cron interval and once modes', async () => {
     const mod = await loadRuntimeModule();
 
     expect(mod.validateScheduleValue('cron', '0 9 * * *')).toBeNull();
     expect(mod.validateScheduleValue('interval', '300000')).toBeNull();
     expect(mod.validateScheduleValue('once', '2026-04-02T10:00:00')).toBeNull();
-    expect(mod.validateScheduleValue('interval', '-1')).toContain('Invalid interval');
-    expect(mod.validateScheduleValue('once', '2026-04-02T10:00:00Z')).toContain('without timezone suffix');
+    expect(mod.validateScheduleValue('interval', '-1')).toContain(
+      'Invalid interval',
+    );
+    expect(mod.validateScheduleValue('once', '2026-04-02T10:00:00Z')).toContain(
+      'without timezone suffix',
+    );
   });
 
   it('creates NanoClaw tools that emit status and write IPC payloads', async () => {
@@ -503,11 +515,20 @@ describe('agent runner runtime diagnostics', () => {
       emitStatus,
     );
 
-    const sendMessageTool = tools.find((tool) => tool.name === 'mcp__nanoclaw__send_message');
-    const listTasksTool = tools.find((tool) => tool.name === 'mcp__nanoclaw__list_tasks');
-    const scheduleTaskTool = tools.find((tool) => tool.name === 'mcp__nanoclaw__schedule_task');
+    const sendMessageTool = tools.find(
+      (tool) => tool.name === 'mcp__nanoclaw__send_message',
+    );
+    const listTasksTool = tools.find(
+      (tool) => tool.name === 'mcp__nanoclaw__list_tasks',
+    );
+    const scheduleTaskTool = tools.find(
+      (tool) => tool.name === 'mcp__nanoclaw__schedule_task',
+    );
 
-    await sendMessageTool.invoke({ text: 'progress update', sender: 'Researcher' });
+    await sendMessageTool.invoke({
+      text: 'progress update',
+      sender: 'Researcher',
+    });
     const tasksText = await listTasksTool.invoke({});
     await scheduleTaskTool.invoke({
       prompt: 'Do thing',
@@ -515,13 +536,13 @@ describe('agent runner runtime diagnostics', () => {
       schedule_value: '60000',
     });
 
-    expect(emitStatus).toHaveBeenCalledWith('mcp__nanoclaw__send_message: progress update');
+    expect(emitStatus).toHaveBeenCalledWith(
+      'mcp__nanoclaw__send_message: progress update',
+    );
     expect(tasksText).toContain('task-1');
     expect(tasksText).not.toContain('task-2');
     expect(fsState.writeFileSync).toHaveBeenCalled();
   });
-
-
 
   it('creates NanoClaw task management tools for main-only and update flows', async () => {
     const mod = await loadRuntimeModule();
@@ -546,12 +567,24 @@ describe('agent runner runtime diagnostics', () => {
       emitStatus,
     );
 
-    const pauseTaskTool = memberTools.find((tool) => tool.name === 'mcp__nanoclaw__pause_task');
-    const resumeTaskTool = memberTools.find((tool) => tool.name === 'mcp__nanoclaw__resume_task');
-    const cancelTaskTool = memberTools.find((tool) => tool.name === 'mcp__nanoclaw__cancel_task');
-    const updateTaskTool = memberTools.find((tool) => tool.name === 'mcp__nanoclaw__update_task');
-    const registerGroupTool = memberTools.find((tool) => tool.name === 'mcp__nanoclaw__register_group');
-    const mainScheduleTaskTool = mainTools.find((tool) => tool.name === 'mcp__nanoclaw__schedule_task');
+    const pauseTaskTool = memberTools.find(
+      (tool) => tool.name === 'mcp__nanoclaw__pause_task',
+    );
+    const resumeTaskTool = memberTools.find(
+      (tool) => tool.name === 'mcp__nanoclaw__resume_task',
+    );
+    const cancelTaskTool = memberTools.find(
+      (tool) => tool.name === 'mcp__nanoclaw__cancel_task',
+    );
+    const updateTaskTool = memberTools.find(
+      (tool) => tool.name === 'mcp__nanoclaw__update_task',
+    );
+    const registerGroupTool = memberTools.find(
+      (tool) => tool.name === 'mcp__nanoclaw__register_group',
+    );
+    const mainScheduleTaskTool = mainTools.find(
+      (tool) => tool.name === 'mcp__nanoclaw__schedule_task',
+    );
 
     await pauseTaskTool.invoke({ task_id: 'task-1' });
     await resumeTaskTool.invoke({ task_id: 'task-1' });
@@ -577,10 +610,18 @@ describe('agent runner runtime diagnostics', () => {
       target_group_jid: 'local:other',
     });
 
-    expect(emitStatus).toHaveBeenCalledWith('mcp__nanoclaw__pause_task: task-1');
-    expect(emitStatus).toHaveBeenCalledWith('mcp__nanoclaw__resume_task: task-1');
-    expect(emitStatus).toHaveBeenCalledWith('mcp__nanoclaw__cancel_task: task-1');
-    expect(emitStatus).toHaveBeenCalledWith('mcp__nanoclaw__update_task: task-1');
+    expect(emitStatus).toHaveBeenCalledWith(
+      'mcp__nanoclaw__pause_task: task-1',
+    );
+    expect(emitStatus).toHaveBeenCalledWith(
+      'mcp__nanoclaw__resume_task: task-1',
+    );
+    expect(emitStatus).toHaveBeenCalledWith(
+      'mcp__nanoclaw__cancel_task: task-1',
+    );
+    expect(emitStatus).toHaveBeenCalledWith(
+      'mcp__nanoclaw__update_task: task-1',
+    );
     expect(fsState.writeFileSync).toHaveBeenCalled();
   });
 
@@ -594,7 +635,11 @@ describe('agent runner runtime diagnostics', () => {
         {
           name: 'failing-tool',
           description: 'Fails loudly',
-          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+          inputSchema: {
+            type: 'object',
+            properties: {},
+            additionalProperties: false,
+          },
         },
       ],
     } as any);
@@ -612,7 +657,8 @@ describe('agent runner runtime diagnostics', () => {
     expect(loaded.tools).toHaveLength(1);
 
     await expect(loaded.tools[0].invoke({})).rejects.toThrow('boom');
-    expect(emitStatus).toHaveBeenCalledWith('mcp__docs__failing-tool: executing');
-
+    expect(emitStatus).toHaveBeenCalledWith(
+      'mcp__docs__failing-tool: executing',
+    );
   });
 });

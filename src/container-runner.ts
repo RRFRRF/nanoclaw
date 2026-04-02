@@ -411,7 +411,8 @@ export async function runContainerAgent(
     let stderrTruncated = false;
 
     // Initialize streaming processor if streaming is enabled
-    const streamingEnabled = input.enableStreaming !== false && STREAMING_CONFIG.ENABLED;
+    const streamingEnabled =
+      input.enableStreaming !== false && STREAMING_CONFIG.ENABLED;
     let streamProcessor: StreamProcessor | null = null;
     const streamEvents: StreamEvent[] = [];
 

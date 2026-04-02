@@ -109,7 +109,9 @@ ${STREAM_MARKERS.THINKING_END}`,
       processor.processChunk(containerOutput);
 
       expect(processor.hasError()).toBe(true);
-      expect(processor.getCurrentStatus().errorMessage).toBe('Tool execution failed');
+      expect(processor.getCurrentStatus().errorMessage).toBe(
+        'Tool execution failed',
+      );
     });
   });
 
@@ -161,9 +163,12 @@ ${STREAM_MARKERS.THINKING_END}`,
     });
 
     it('should handle rapid successive chunks', () => {
-      const rapidChunks = Array.from({ length: 50 }, (_, i) =>
-        `${STREAM_MARKERS.TOOL_PROGRESS}{"type":"tool_progress","timestamp":"2024-01-01T00:00:${i}Z","data":{"toolId":"t1","name":"tool","message
-message":"Progress ${i}","percent":${i * 2}}}`);
+      const rapidChunks = Array.from(
+        { length: 50 },
+        (_, i) =>
+          `${STREAM_MARKERS.TOOL_PROGRESS}{"type":"tool_progress","timestamp":"2024-01-01T00:00:${i}Z","data":{"toolId":"t1","name":"tool","message
+message":"Progress ${i}","percent":${i * 2}}}`,
+      );
 
       let allEvents: any[] = [];
       for (const chunk of rapidChunks) {
@@ -185,7 +190,9 @@ message":"Progress ${i}","percent":${i * 2}}}`);
 
       // Generate many events
       for (let i = 0; i < 100; i++) {
-        limitedProcessor.processChunk(`${STREAM_MARKERS.TOOL_START}{"type":"tool_start","timestamp":"2024-01-01T00:00:00Z","data":{"toolId":"t${i}","name":"tool","input":{}}}`);
+        limitedProcessor.processChunk(
+          `${STREAM_MARKERS.TOOL_START}{"type":"tool_start","timestamp":"2024-01-01T00:00:00Z","data":{"toolId":"t${i}","name":"tool","input":{}}}`,
+        );
       }
 
       // Should be limited to maxEvents
@@ -193,8 +200,12 @@ message":"Progress ${i}","percent":${i * 2}}}`);
     });
 
     it('should properly cleanup resources', () => {
-      processor.processChunk(`${STREAM_MARKERS.PLAN_START}{"type":"plan","timestamp":"2024-01-01T00:00:00Z","data":{"steps":[{"id":"1","description":"Step","status":"pending"}]}}${STREAM_MARKERS.PLAN_END}`);
-      processor.processChunk(`${STREAM_MARKERS.TOOL_START}{"type":"tool_start","timestamp":"2024-01-01T00:00:00Z","data":{"toolId":"t1","name":"tool","input":{}}}`);
+      processor.processChunk(
+        `${STREAM_MARKERS.PLAN_START}{"type":"plan","timestamp":"2024-01-01T00:00:00Z","data":{"steps":[{"id":"1","description":"Step","status":"pending"}]}}${STREAM_MARKERS.PLAN_END}`,
+      );
+      processor.processChunk(
+        `${STREAM_MARKERS.TOOL_START}{"type":"tool_start","timestamp":"2024-01-01T00:00:00Z","data":{"toolId":"t1","name":"tool","input":{}}}`,
+      );
 
       // Dispose and verify cleanup
       processor.dispose();

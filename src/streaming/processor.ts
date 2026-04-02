@@ -63,10 +63,14 @@ export class StreamProcessor {
   private options: ProcessOptions;
   private events: StreamEvent[] = [];
   private planSteps: Map<string, PlanStep> = new Map();
-  private activeTools: Map<string, { name: string; startTime: number }> = new Map();
+  private activeTools: Map<string, { name: string; startTime: number }> =
+    new Map();
   private currentStatus: ExecutionStatus;
   private stats: ProcessorStats;
-  private eventCallbacks: Map<StreamEventType, Set<(event: StreamEvent) => void>> = new Map();
+  private eventCallbacks: Map<
+    StreamEventType,
+    Set<(event: StreamEvent) => void>
+  > = new Map();
   private completeCallbacks: Set<() => void> = new Set();
   private errorCallbacks: Set<(error: string) => void> = new Set();
 
@@ -176,18 +180,24 @@ export class StreamProcessor {
         this.planSteps.set(step.id, { ...step });
       }
       this.stats.planStepsTotal = steps.length;
-      this.stats.planStepsCompleted = steps.filter((s) => s.status === 'completed').length;
+      this.stats.planStepsCompleted = steps.filter(
+        (s) => s.status === 'completed',
+      ).length;
     }
 
     if (isPlanStepEvent(event)) {
-      const { stepId, status } = event.data as { stepId: string; status: StepStatus };
+      const { stepId, status } = event.data as {
+        stepId: string;
+        status: StepStatus;
+      };
       const step = this.planSteps.get(stepId);
       if (step) {
         step.status = status;
         this.planSteps.set(stepId, step);
       }
-      this.stats.planStepsCompleted = Array.from(this.planSteps.values())
-        .filter((s) => s.status === 'completed').length;
+      this.stats.planStepsCompleted = Array.from(
+        this.planSteps.values(),
+      ).filter((s) => s.status === 'completed').length;
     }
 
     if (isToolStartEvent(event)) {
@@ -227,8 +237,9 @@ export class StreamProcessor {
     }
 
     // Update current step
-    const pendingSteps = Array.from(this.planSteps.values())
-      .filter((s) => s.status === 'in_progress');
+    const pendingSteps = Array.from(this.planSteps.values()).filter(
+      (s) => s.status === 'in_progress',
+    );
     if (pendingSteps.length > 0) {
       this.currentStatus.currentStep = pendingSteps[0];
     }
@@ -283,7 +294,10 @@ export class StreamProcessor {
   /**
    * Register event callback
    */
-  onEvent(type: StreamEventType, callback: (event: StreamEvent) => void): () => void {
+  onEvent(
+    type: StreamEventType,
+    callback: (event: StreamEvent) => void,
+  ): () => void {
     if (!this.eventCallbacks.has(type)) {
       this.eventCallbacks.set(type, new Set());
     }
@@ -375,8 +389,10 @@ export class StreamProcessor {
    */
   getActiveTools(): Array<{ name: string; duration: number }> {
     const now = Date.now();
-    return Array.from(this.activeTools.values())
-      .map((tool) => ({ name: tool.name, duration: now - tool.startTime }));
+    return Array.from(this.activeTools.values()).map((tool) => ({
+      name: tool.name,
+      duration: now - tool.startTime,
+    }));
   }
 
   /**

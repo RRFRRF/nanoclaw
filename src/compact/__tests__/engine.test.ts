@@ -8,12 +8,12 @@ import {
   compactEngine,
   getArchiveStoreSize,
 } from '../engine.js';
-import {
-  CompressionLevel,
-  CompactMessage,
-} from '../types.js';
+import { CompressionLevel, CompactMessage } from '../types.js';
 
-function createMessages(count: number, baseContent = 'Message'): CompactMessage[] {
+function createMessages(
+  count: number,
+  baseContent = 'Message',
+): CompactMessage[] {
   return Array.from({ length: count }, (_, i) => ({
     id: `msg_${i}`,
     chat_jid: 'test@jid',
@@ -124,8 +124,10 @@ describe('IntelligentCompactEngine', () => {
       ];
       const result = engine.compact(messages, 'test-session');
 
-      if (result.level === CompressionLevel.L3_COLLAPSE ||
-          result.level === CompressionLevel.L4_ARCHIVE) {
+      if (
+        result.level === CompressionLevel.L3_COLLAPSE ||
+        result.level === CompressionLevel.L4_ARCHIVE
+      ) {
         expect(result.messages.length).toBeLessThan(messages.length);
       }
     });
@@ -146,9 +148,14 @@ describe('IntelligentCompactEngine', () => {
       ];
       const result = engine.compact(messages, 'order-session');
 
-      if (result.level === CompressionLevel.L3_COLLAPSE || result.level === CompressionLevel.L4_ARCHIVE) {
+      if (
+        result.level === CompressionLevel.L3_COLLAPSE ||
+        result.level === CompressionLevel.L4_ARCHIVE
+      ) {
         const intentIndex = result.messages.findIndex((m) => m.id === 'intent');
-        const collapsedIndex = result.messages.findIndex((m) => m.id.startsWith('collapsed_'));
+        const collapsedIndex = result.messages.findIndex((m) =>
+          m.id.startsWith('collapsed_'),
+        );
         expect(intentIndex).toBeGreaterThanOrEqual(0);
         expect(collapsedIndex).toBeGreaterThan(intentIndex);
       }
@@ -176,7 +183,9 @@ describe('IntelligentCompactEngine', () => {
       if (result.level === CompressionLevel.L4_ARCHIVE) {
         expect(result.archivedIds?.length).toBeGreaterThan(0);
         expect(result.stats.archivedCount).toBeGreaterThan(0);
-        const archiveRef = result.messages.find((m) => m.content.includes('[Archived'));
+        const archiveRef = result.messages.find((m) =>
+          m.content.includes('[Archived'),
+        );
         expect(archiveRef).toBeDefined();
       }
     });
@@ -197,7 +206,9 @@ describe('IntelligentCompactEngine', () => {
       ];
 
       const result = engine.compact(messages, 'test-session');
-      const preservedIntent = result.messages.find((m) => m.content.includes('I need you'));
+      const preservedIntent = result.messages.find((m) =>
+        m.content.includes('I need you'),
+      );
       expect(preservedIntent).toBeDefined();
     });
   });
@@ -254,7 +265,9 @@ describe('IntelligentCompactEngine', () => {
       const messages = createToolResults(30);
       const result = engine.compact(messages, 'flag-session');
       expect(result.stats.compactedCount).toBeGreaterThanOrEqual(0);
-      expect(result.stats.compactedCount).toBeLessThanOrEqual(result.messages.length);
+      expect(result.stats.compactedCount).toBeLessThanOrEqual(
+        result.messages.length,
+      );
     });
   });
 

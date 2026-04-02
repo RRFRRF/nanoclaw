@@ -55,8 +55,12 @@ ${STREAM_MARKERS.THINKING_END}`;
 
       const events = parser.parseChunk(chunk);
       expect(events).toHaveLength(2);
-      expect((events[0].data as { content: string }).content).toBe('First thought');
-      expect((events[1].data as { content: string }).content).toBe('Second thought');
+      expect((events[0].data as { content: string }).content).toBe(
+        'First thought',
+      );
+      expect((events[1].data as { content: string }).content).toBe(
+        'Second thought',
+      );
     });
 
     it('should update current thinking', () => {
@@ -175,7 +179,9 @@ ${STREAM_MARKERS.CONTENT_END}`;
       const events = parser.parseChunk(chunk);
       expect(events).toHaveLength(1);
       expect(events[0].type).toBe('error');
-      expect((events[0].data as { message: string }).message).toBe('Something went wrong');
+      expect((events[0].data as { message: string }).message).toBe(
+        'Something went wrong',
+      );
     });
   });
 
@@ -207,7 +213,9 @@ ${STREAM_MARKERS.THINKING_END}`;
 
       const events2 = parser.parseChunk(chunk2);
       expect(events2).toHaveLength(1);
-      expect((events2[0].data as { content: string }).content).toBe('First part of content');
+      expect((events2[0].data as { content: string }).content).toBe(
+        'First part of content',
+      );
     });
   });
 

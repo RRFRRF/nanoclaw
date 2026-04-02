@@ -496,7 +496,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const sessionId = sessions[chatJid]?.sessionId || sessions[group.folder]?.sessionId || 'default';
+  const sessionId =
+    sessions[chatJid]?.sessionId ||
+    sessions[group.folder]?.sessionId ||
+    'default';
   const prompt = formatMessages(missedMessages, TIMEZONE, sessionId);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
@@ -559,7 +562,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
     if (result.queryCompleted) {
       queryCompleted = true;
-      finalOutputSent = finalOutputSent || streamedOutputSent || structuredContentSent;
+      finalOutputSent =
+        finalOutputSent || streamedOutputSent || structuredContentSent;
       queue.notifyIdle(chatJid);
       resetIdleTimer();
     }
@@ -843,7 +847,10 @@ async function startMessageLoop(): Promise<void> {
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
-          const sessionId = sessions[chatJid]?.sessionId || sessions[group.folder]?.sessionId || 'default';
+          const sessionId =
+            sessions[chatJid]?.sessionId ||
+            sessions[group.folder]?.sessionId ||
+            'default';
           const formatted = formatMessages(messagesToSend, TIMEZONE, sessionId);
 
           if (queue.sendMessage(chatJid, formatted)) {

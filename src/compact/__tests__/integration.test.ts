@@ -120,7 +120,9 @@ describe('Compaction Integration', () => {
     ];
 
     const result = formatMessages(messages, 'UTC', 'test-session-123');
-    expect(result.indexOf('I need help with this task')).toBeLessThan(result.indexOf('[Archived'));
+    expect(result.indexOf('I need help with this task')).toBeLessThan(
+      result.indexOf('[Archived'),
+    );
     expect(result).toContain('compacted="true"');
   });
 

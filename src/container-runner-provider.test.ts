@@ -48,6 +48,15 @@ async function loadRunner(provider: Provider, authMode: AuthMode) {
     IDLE_TIMEOUT: 1800000,
     MODEL_API_FORMAT: provider === 'openai' ? 'openai-responses' : 'anthropic',
     OPENAI_MODEL: 'gpt-test-model',
+    STREAMING_CONFIG: {
+      ENABLED: true,
+      SHOW_THINKING: true,
+      THINKING_COLLAPSED: false,
+      SHOW_PLAN: true,
+      SHOW_TOOLS: true,
+      BUFFER_SIZE: 1000,
+      MAX_EVENTS: 10000,
+    },
     TIMEZONE: 'America/Los_Angeles',
   }));
 

@@ -89,12 +89,30 @@ export class StreamParser {
 
       // Check for single-line markers
       const singleLineMarkers = [
-        { marker: STREAM_MARKERS.PLAN_STEP, type: 'plan_step' as StreamEventType },
-        { marker: STREAM_MARKERS.TOOL_START, type: 'tool_start' as StreamEventType },
-        { marker: STREAM_MARKERS.TOOL_PROGRESS, type: 'tool_progress' as StreamEventType },
-        { marker: STREAM_MARKERS.TOOL_COMPLETE, type: 'tool_complete' as StreamEventType },
-        { marker: STREAM_MARKERS.DECISION, type: 'decision' as StreamEventType },
-        { marker: STREAM_MARKERS.COMPLETE, type: 'complete' as StreamEventType },
+        {
+          marker: STREAM_MARKERS.PLAN_STEP,
+          type: 'plan_step' as StreamEventType,
+        },
+        {
+          marker: STREAM_MARKERS.TOOL_START,
+          type: 'tool_start' as StreamEventType,
+        },
+        {
+          marker: STREAM_MARKERS.TOOL_PROGRESS,
+          type: 'tool_progress' as StreamEventType,
+        },
+        {
+          marker: STREAM_MARKERS.TOOL_COMPLETE,
+          type: 'tool_complete' as StreamEventType,
+        },
+        {
+          marker: STREAM_MARKERS.DECISION,
+          type: 'decision' as StreamEventType,
+        },
+        {
+          marker: STREAM_MARKERS.COMPLETE,
+          type: 'complete' as StreamEventType,
+        },
         { marker: STREAM_MARKERS.ERROR, type: 'error' as StreamEventType },
       ];
 
@@ -105,7 +123,10 @@ export class StreamParser {
       }
 
       // Check for legacy markers
-      if (this.config.enableLegacyParsing && this.buffer.includes(LEGACY_MARKERS.OUTPUT_START)) {
+      if (
+        this.config.enableLegacyParsing &&
+        this.buffer.includes(LEGACY_MARKERS.OUTPUT_START)
+      ) {
         return this.parseLegacyOutput();
       }
     }
@@ -130,7 +151,9 @@ export class StreamParser {
       .slice(startIdx + STREAM_MARKERS.THINKING_START.length, endIdx)
       .trim();
 
-    this.buffer = this.buffer.slice(0, startIdx) + this.buffer.slice(endIdx + STREAM_MARKERS.THINKING_END.length);
+    this.buffer =
+      this.buffer.slice(0, startIdx) +
+      this.buffer.slice(endIdx + STREAM_MARKERS.THINKING_END.length);
 
     try {
       const event = JSON.parse(jsonStr) as StreamEvent;
@@ -160,7 +183,9 @@ export class StreamParser {
       .slice(startIdx + STREAM_MARKERS.PLAN_START.length, endIdx)
       .trim();
 
-    this.buffer = this.buffer.slice(0, startIdx) + this.buffer.slice(endIdx + STREAM_MARKERS.PLAN_END.length);
+    this.buffer =
+      this.buffer.slice(0, startIdx) +
+      this.buffer.slice(endIdx + STREAM_MARKERS.PLAN_END.length);
 
     try {
       const event = JSON.parse(jsonStr) as StreamEvent;
@@ -190,7 +215,9 @@ export class StreamParser {
       .slice(startIdx + STREAM_MARKERS.CONTENT_START.length, endIdx)
       .trim();
 
-    this.buffer = this.buffer.slice(0, startIdx) + this.buffer.slice(endIdx + STREAM_MARKERS.CONTENT_END.length);
+    this.buffer =
+      this.buffer.slice(0, startIdx) +
+      this.buffer.slice(endIdx + STREAM_MARKERS.CONTENT_END.length);
 
     try {
       return JSON.parse(jsonStr) as StreamEvent;
@@ -202,7 +229,10 @@ export class StreamParser {
   /**
    * Parse a single-line event (marker + JSON on same/next line)
    */
-  private parseSingleLineEvent(marker: string, type: StreamEventType): StreamEvent | null {
+  private parseSingleLineEvent(
+    marker: string,
+    type: StreamEventType,
+  ): StreamEvent | null {
     const markerIdx = this.buffer.indexOf(marker);
     if (markerIdx === -1) return null;
 
@@ -270,7 +300,9 @@ export class StreamParser {
       .slice(startIdx + LEGACY_MARKERS.OUTPUT_START.length, endIdx)
       .trim();
 
-    this.buffer = this.buffer.slice(0, startIdx) + this.buffer.slice(endIdx + LEGACY_MARKERS.OUTPUT_END.length);
+    this.buffer =
+      this.buffer.slice(0, startIdx) +
+      this.buffer.slice(endIdx + LEGACY_MARKERS.OUTPUT_END.length);
 
     try {
       const legacyData = JSON.parse(jsonStr) as {

@@ -56,7 +56,14 @@ vi.mock('./terminal-options.js', () => ({
 vi.mock('./terminal/stream-commands.js', () => ({
   isStreamCommand: vi.fn((command: string) => {
     const cmd = command.trim().split(/\s+/)[0]?.toLowerCase();
-    return ['/view-mode', '/show-thinking', '/show-plan', '/show-tools', '/collapse-thinking', '/stream-status'].includes(cmd);
+    return [
+      '/view-mode',
+      '/show-thinking',
+      '/show-plan',
+      '/show-tools',
+      '/collapse-thinking',
+      '/stream-status',
+    ].includes(cmd);
   }),
   handleStreamCommand: vi.fn((command: string) => {
     const parts = command.trim().split(/\s+/);
@@ -69,7 +76,9 @@ vi.mock('./terminal/stream-commands.js', () => ({
     }
 
     if (cmd === '/stream-status') {
-      storeState.messages.push({ text: 'Streaming Configuration:\n  Show thinking: false' });
+      storeState.messages.push({
+        text: 'Streaming Configuration:\n  Show thinking: false',
+      });
       return true;
     }
 
@@ -183,7 +192,9 @@ describe('parseTerminalCommand', () => {
   });
 
   it('completes /new flags and returns empty for non-commands', () => {
-    expect(getTerminalCompletions('/new analyst --', [])[0]).toContain('--mount');
+    expect(getTerminalCompletions('/new analyst --', [])[0]).toContain(
+      '--mount',
+    );
     expect(getTerminalCompletions('hello', [])[0]).toEqual([]);
   });
 });
@@ -227,9 +238,11 @@ describe('TerminalChannel', () => {
     deleteAgent: vi.fn((query: string) =>
       query === 'two' ? { agent: agents[1] } : null,
     ),
-    resolveAgent: vi.fn((query: string) =>
-      agents.find((agent) => agent.name === query || agent.folder === query) ||
-      null,
+    resolveAgent: vi.fn(
+      (query: string) =>
+        agents.find(
+          (agent) => agent.name === query || agent.folder === query,
+        ) || null,
     ),
   };
 
@@ -282,7 +295,10 @@ describe('TerminalChannel', () => {
     await channel.handleStreamEvent('local:one', {
       type: 'decision',
       timestamp: 't3b',
-      data: { description: 'Container startup', choice: 'Workspace initialized' },
+      data: {
+        description: 'Container startup',
+        choice: 'Workspace initialized',
+      },
     } as any);
     await channel.handleStreamEvent('local:one', {
       type: 'error',
@@ -300,7 +316,9 @@ describe('TerminalChannel', () => {
       true,
     );
     expect(
-      storeState.messages.some((m) => m.text === 'Container startup: Workspace initialized'),
+      storeState.messages.some(
+        (m) => m.text === 'Container startup: Workspace initialized',
+      ),
     ).toBe(true);
     expect(
       storeState.messages.some((m) => m.tone === 'error' && m.text === 'bad'),
@@ -319,7 +337,9 @@ describe('TerminalChannel', () => {
     ).toBe(true);
     expect(
       storeState.messages.some(
-        (m) => typeof m.text === 'string' && m.text.includes('Streaming Configuration:'),
+        (m) =>
+          typeof m.text === 'string' &&
+          m.text.includes('Streaming Configuration:'),
       ),
     ).toBe(true);
   });
@@ -405,13 +425,15 @@ describe('TerminalChannel', () => {
     ).toBe(true);
 
     await inkState.mountedProps.onSubmit('/current');
-    expect(storeState.messages.some((m) => m.text === 'No agent attached.')).toBe(
-      true,
-    );
+    expect(
+      storeState.messages.some((m) => m.text === 'No agent attached.'),
+    ).toBe(true);
 
     await inkState.mountedProps.onSubmit('/new scout --mount /repo --rw');
     expect(
-      storeState.messages.some((m) => m.text === 'Created agent scout (local-scout)'),
+      storeState.messages.some(
+        (m) => m.text === 'Created agent scout (local-scout)',
+      ),
     ).toBe(true);
 
     await inkState.mountedProps.onSubmit('/switch missing');

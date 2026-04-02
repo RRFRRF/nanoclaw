@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => {
-  const sessions: Record<string, { sessionId: string; resumeAt?: string | null }> = {};
+  const sessions: Record<
+    string,
+    { sessionId: string; resumeAt?: string | null }
+  > = {};
   const routerState: Record<string, string> = {};
   const registeredGroupsStore: Record<string, any> = {};
   const channel = {
@@ -59,7 +62,15 @@ const state = vi.hoisted(() => {
     writeGroupsSnapshot: vi.fn(),
     writeTasksSnapshot: vi.fn(),
   };
-  return { sessions, routerState, registeredGroupsStore, channel, queue, db, containerRunner };
+  return {
+    sessions,
+    routerState,
+    registeredGroupsStore,
+    channel,
+    queue,
+    db,
+    containerRunner,
+  };
 });
 
 vi.mock('./config.js', () => ({
@@ -107,7 +118,10 @@ vi.mock('./ipc.js', () => ({ startIpcWatcher: vi.fn() }));
 vi.mock('./compact/index.js', () => ({ compactEngine: {} }));
 vi.mock('./router.js', () => ({
   findChannel: vi.fn(() => state.channel),
-  formatMessages: vi.fn((_messages: any[], _timezone: string, sessionId: string) => `formatted:${sessionId}`),
+  formatMessages: vi.fn(
+    (_messages: any[], _timezone: string, sessionId: string) =>
+      `formatted:${sessionId}`,
+  ),
   formatOutbound: vi.fn(),
   escapeXml: vi.fn(),
 }));
@@ -128,7 +142,9 @@ vi.mock('./service-lock.js', () => ({
   releaseServiceLock: vi.fn(),
 }));
 vi.mock('./task-scheduler.js', () => ({ startSchedulerLoop: vi.fn() }));
-vi.mock('./transient-retry.js', () => ({ shouldRetryTransientAttempt: vi.fn(() => false) }));
+vi.mock('./transient-retry.js', () => ({
+  shouldRetryTransientAttempt: vi.fn(() => false),
+}));
 vi.mock('./logger.js', () => ({
   logger: {
     debug: vi.fn(),
@@ -165,8 +181,12 @@ describe('index orchestration integration', () => {
 
   beforeEach(() => {
     Object.keys(state.sessions).forEach((key) => delete state.sessions[key]);
-    Object.keys(state.routerState).forEach((key) => delete state.routerState[key]);
-    Object.keys(state.registeredGroupsStore).forEach((key) => delete state.registeredGroupsStore[key]);
+    Object.keys(state.routerState).forEach(
+      (key) => delete state.routerState[key],
+    );
+    Object.keys(state.registeredGroupsStore).forEach(
+      (key) => delete state.registeredGroupsStore[key],
+    );
     delete state.channel.handleStreamEvent;
     vi.clearAllMocks();
     _setRegisteredGroups({ 'local:1': group as any });
@@ -174,12 +194,16 @@ describe('index orchestration integration', () => {
   });
 
   it('persists session and clears resumeAt for missing resume point', () => {
-    __testInternals.persistSessionFromOutput('local-1', {
-      status: 'error',
-      error: 'No message found with message.uuid abc',
-      newSessionId: 'session-2',
-      result: null,
-    } as any, 'session-1');
+    __testInternals.persistSessionFromOutput(
+      'local-1',
+      {
+        status: 'error',
+        error: 'No message found with message.uuid abc',
+        newSessionId: 'session-2',
+        result: null,
+      } as any,
+      'session-1',
+    );
 
     expect(state.sessions['local-1']).toEqual({
       sessionId: 'session-2',
@@ -202,7 +226,13 @@ describe('index orchestration integration', () => {
     const handleStreamEvent = vi.fn(async () => {});
     state.channel.handleStreamEvent = handleStreamEvent;
     state.containerRunner.runContainerAgent.mockImplementation(
-      async (_group: any, _input: any, _register: any, _onOutput: any, onStreamEvent: any) => {
+      async (
+        _group: any,
+        _input: any,
+        _register: any,
+        _onOutput: any,
+        onStreamEvent: any,
+      ) => {
         await onStreamEvent({
           type: 'thinking',
           timestamp: 't1',
@@ -229,10 +259,16 @@ describe('index orchestration integration', () => {
         is_from_me: false,
       },
     ] as any);
-    state.containerRunner.runContainerAgent.mockImplementation(async (_group: any, _input: any, _register: any, onOutput: any) => {
-      await onOutput({ status: 'success', result: null, queryCompleted: true });
-      return { status: 'error', error: 'late error', result: null };
-    });
+    state.containerRunner.runContainerAgent.mockImplementation(
+      async (_group: any, _input: any, _register: any, onOutput: any) => {
+        await onOutput({
+          status: 'success',
+          result: null,
+          queryCompleted: true,
+        });
+        return { status: 'error', error: 'late error', result: null };
+      },
+    );
 
     const processed = await __testInternals.processGroupMessages('local:1');
 

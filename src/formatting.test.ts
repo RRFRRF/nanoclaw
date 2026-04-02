@@ -108,7 +108,7 @@ describe('formatMessages', () => {
   it('handles empty array', () => {
     const result = formatMessages([], TZ);
     expect(result).toContain('<context timezone="UTC" />');
-    expect(result).toContain('<messages>\n\n</messages>');
+    expect(result).toContain('<messages>\n</messages>');
   });
 
   it('converts timestamps to local time for given timezone', () => {

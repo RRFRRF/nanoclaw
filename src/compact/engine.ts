@@ -69,7 +69,7 @@ function summarizeToolResult(content: string): string {
   }
 
   // Default: extract first line and indicate truncation
-  const lines = content.split('\n').filter(l => l.trim());
+  const lines = content.split('\n').filter((l) => l.trim());
   const firstLine = lines[0]?.trim() || '';
   const truncated = content.length > 200;
   return `[Tool Result: ${firstLine.slice(0, 100)}${firstLine.length > 100 ? '...' : ''}${truncated ? ` (+${content.length - 100} chars)` : ''}]`;
@@ -83,7 +83,9 @@ function summarizeExploration(content: string): string {
   const findings: string[] = [];
 
   // Pattern: "found", "discovered", "结果是"
-  const foundMatches = content.match(/(?:found|discovered|发现|找到|结果是)[：:]\s*(.+?)(?:\n|$)/gi);
+  const foundMatches = content.match(
+    /(?:found|discovered|发现|找到|结果是)[：:]\s*(.+?)(?:\n|$)/gi,
+  );
   if (foundMatches) {
     findings.push(...foundMatches.slice(0, 3));
   }
@@ -118,7 +120,9 @@ function createTimelineSummary(messages: ClassifiedMessage[]): string {
     // Collect key events (high value messages)
     if (msg.metadata.valueScore >= 70) {
       const content = msg.content.slice(0, 50);
-      keyEvents.push(`${msg.metadata.type}: ${content}${msg.content.length > 50 ? '...' : ''}`);
+      keyEvents.push(
+        `${msg.metadata.type}: ${content}${msg.content.length > 50 ? '...' : ''}`,
+      );
     }
   }
 
@@ -171,9 +175,10 @@ export class IntelligentCompactEngine {
    * L1: Snip - Replace old tool results with references.
    * Keeps the most recent N tool results intact.
    */
-  private l1Snip(
-    messages: ClassifiedMessage[],
-  ): { messages: ClassifiedMessage[]; modified: boolean } {
+  private l1Snip(messages: ClassifiedMessage[]): {
+    messages: ClassifiedMessage[];
+    modified: boolean;
+  } {
     const toolResultIndices: number[] = [];
 
     // Find all tool results
@@ -188,7 +193,10 @@ export class IntelligentCompactEngine {
     if (toolResultIndices.length <= keepCount) {
       return { messages, modified: false };
     }
-    const toSnip = toolResultIndices.slice(0, toolResultIndices.length - keepCount);
+    const toSnip = toolResultIndices.slice(
+      0,
+      toolResultIndices.length - keepCount,
+    );
 
     if (toSnip.length === 0) {
       return { messages, modified: false };
@@ -214,16 +222,20 @@ export class IntelligentCompactEngine {
   /**
    * L2: Summarize - Create structured summaries.
    */
-  private l2Summarize(
-    messages: ClassifiedMessage[],
-  ): { messages: ClassifiedMessage[]; modified: boolean } {
+  private l2Summarize(messages: ClassifiedMessage[]): {
+    messages: ClassifiedMessage[];
+    modified: boolean;
+  } {
     let modified = false;
     const result = [...messages];
 
     for (let i = 0; i < result.length; i++) {
       const msg = result[i];
 
-      if (msg.metadata.type === ContentType.TOOL_RESULT && msg.metadata.isCompressible) {
+      if (
+        msg.metadata.type === ContentType.TOOL_RESULT &&
+        msg.metadata.isCompressible
+      ) {
         // Summarize tool results
         const summary = summarizeToolResult(msg.content);
         result[i] = {
@@ -235,7 +247,10 @@ export class IntelligentCompactEngine {
           },
         };
         modified = true;
-      } else if (msg.metadata.type === ContentType.EXPLORATION && msg.metadata.isCompressible) {
+      } else if (
+        msg.metadata.type === ContentType.EXPLORATION &&
+        msg.metadata.isCompressible
+      ) {
         // Summarize exploration
         const summary = summarizeExploration(msg.content);
         result[i] = {
@@ -256,9 +271,11 @@ export class IntelligentCompactEngine {
   /**
    * L3: Collapse - Merge non-essential messages.
    */
-  private l3Collapse(
-    messages: ClassifiedMessage[],
-  ): { messages: ClassifiedMessage[]; modified: boolean; collapsedCount: number } {
+  private l3Collapse(messages: ClassifiedMessage[]): {
+    messages: ClassifiedMessage[];
+    modified: boolean;
+    collapsedCount: number;
+  } {
     const highValueTypes = [
       ContentType.USER_INTENT,
       ContentType.DECISION,
@@ -274,8 +291,9 @@ export class IntelligentCompactEngine {
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
       const isRecent = i >= messages.length - recentKeepCount;
-      const isHighValue = highValueTypes.includes(msg.metadata.type) ||
-                          msg.metadata.valueScore >= 80;
+      const isHighValue =
+        highValueTypes.includes(msg.metadata.type) ||
+        msg.metadata.valueScore >= 80;
 
       if (!isHighValue && !isRecent) {
         collapsibleIndices.push(i);
@@ -286,7 +304,9 @@ export class IntelligentCompactEngine {
       return { messages, modified: false, collapsedCount: 0 };
     }
 
-    const collapsibleMessages = collapsibleIndices.map((index) => messages[index]);
+    const collapsibleMessages = collapsibleIndices.map(
+      (index) => messages[index],
+    );
 
     // Create a timeline summary of collapsed messages
     const timelineSummary = createTimelineSummary(collapsibleMessages);
@@ -306,8 +326,8 @@ export class IntelligentCompactEngine {
         isCompressible: true,
         confidence: 1,
         extras: {
-          collapsedMessages: collapsibleMessages.map(m => m.id),
-          originalTypes: collapsibleMessages.map(m => m.metadata.type),
+          collapsedMessages: collapsibleMessages.map((m) => m.id),
+          originalTypes: collapsibleMessages.map((m) => m.metadata.type),
           compacted: true,
         },
       },
@@ -340,7 +360,11 @@ export class IntelligentCompactEngine {
   private l4Archive(
     messages: ClassifiedMessage[],
     sessionId?: string,
-  ): { messages: ClassifiedMessage[]; modified: boolean; archiveEntry?: ArchiveEntry } {
+  ): {
+    messages: ClassifiedMessage[];
+    modified: boolean;
+    archiveEntry?: ArchiveEntry;
+  } {
     const highValueThreshold = this.config.l4ValueThreshold;
 
     const archiveIndices: number[] = [];
@@ -370,7 +394,7 @@ export class IntelligentCompactEngine {
     const archiveEntry: ArchiveEntry = {
       id: archiveId,
       sessionId: sessionId || 'default',
-      messageIds: archiveMessages.map(m => m.id),
+      messageIds: archiveMessages.map((m) => m.id),
       content: archivedContent,
       archivedAt: new Date().toISOString(),
       valueScores,
@@ -398,9 +422,15 @@ export class IntelligentCompactEngine {
         valueScore: 60,
         isCompressible: true,
         confidence: 1,
-        extras: { archiveId, archivedCount: archiveMessages.length, compacted: true },
+        extras: {
+          archiveId,
+          archivedCount: archiveMessages.length,
+          compacted: true,
+        },
       },
-      tokenCount: estimateTokens(`[Archived ${archiveMessages.length} messages]`),
+      tokenCount: estimateTokens(
+        `[Archived ${archiveMessages.length} messages]`,
+      ),
     };
 
     const firstArchivedIndex = archiveIndices[0];
@@ -426,19 +456,19 @@ export class IntelligentCompactEngine {
   /**
    * Main compaction entry point.
    */
-  compact(
-    messages: CompactMessage[],
-    sessionId?: string,
-  ): CompactResult {
+  compact(messages: CompactMessage[], sessionId?: string): CompactResult {
     const tokensBefore = this.calculateTokens(messages);
     const level = this.determineLevel(tokensBefore);
 
-    logger.debug({
-      messageCount: messages.length,
-      tokensBefore,
-      maxTokens: this.config.maxTokens,
-      level,
-    }, 'Compacting messages');
+    logger.debug(
+      {
+        messageCount: messages.length,
+        tokensBefore,
+        maxTokens: this.config.maxTokens,
+        level,
+      },
+      'Compacting messages',
+    );
 
     // Handle empty or single message
     if (messages.length <= 1) {
@@ -500,7 +530,11 @@ export class IntelligentCompactEngine {
       // Then L4
       const l4Result = this.l4Archive(classified, sessionId);
       classified = l4Result.messages;
-      modified = l1Result.modified || l2Result.modified || l3Result.modified || l4Result.modified;
+      modified =
+        l1Result.modified ||
+        l2Result.modified ||
+        l3Result.modified ||
+        l4Result.modified;
 
       if (l4Result.archiveEntry) {
         archivedIds = [l4Result.archiveEntry.id];
@@ -508,7 +542,7 @@ export class IntelligentCompactEngine {
     }
 
     // Calculate final stats
-    const resultMessages: CompactMessage[] = classified.map(msg => {
+    const resultMessages: CompactMessage[] = classified.map((msg) => {
       const isActuallyModified = !!(
         msg.metadata.extras?.snipped ||
         msg.metadata.extras?.summarized ||
@@ -527,7 +561,7 @@ export class IntelligentCompactEngine {
 
     const stats: CompactStats = {
       totalMessages: messages.length,
-      compactedCount: resultMessages.filter(m => m.isCompacted).length,
+      compactedCount: resultMessages.filter((m) => m.isCompacted).length,
       archivedCount: archivedIds.length,
       tokensBefore,
       tokensAfter,
@@ -536,12 +570,15 @@ export class IntelligentCompactEngine {
       timestamp: new Date().toISOString(),
     };
 
-    logger.info({
-      level,
-      tokensBefore,
-      tokensAfter,
-      compressionRatio: stats.compressionRatio,
-    }, 'Compaction completed');
+    logger.info(
+      {
+        level,
+        tokensBefore,
+        tokensAfter,
+        compressionRatio: stats.compressionRatio,
+      },
+      'Compaction completed',
+    );
 
     return {
       messages: resultMessages,
@@ -554,7 +591,10 @@ export class IntelligentCompactEngine {
   /**
    * Restore archived messages by archive ID.
    */
-  restoreArchive(archiveId: string, sessionId: string): ArchiveEntry | undefined {
+  restoreArchive(
+    archiveId: string,
+    sessionId: string,
+  ): ArchiveEntry | undefined {
     const sessionArchives = archiveStore.get(sessionId);
     if (!sessionArchives) {
       return undefined;

@@ -298,7 +298,9 @@ describe('container-runner timeout behavior', () => {
       onStreamEvent,
     );
 
-    fakeProc.stdout.push('<<<THINKING>>>{"content":"reasoning"}<<<THINKING_END>>>');
+    fakeProc.stdout.push(
+      '<<<THINKING>>>{"content":"reasoning"}<<<THINKING_END>>>',
+    );
     await vi.advanceTimersByTimeAsync(10);
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
@@ -368,7 +370,12 @@ describe('container-runner timeout behavior', () => {
 
   it('parses markers split across stdout chunks', async () => {
     const onOutput = vi.fn(async () => {});
-    const resultPromise = runContainerAgent(testGroup, testInput, () => {}, onOutput);
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
 
     const payload = `${OUTPUT_START_MARKER}\n${JSON.stringify({
       status: 'success',
@@ -390,7 +397,12 @@ describe('container-runner timeout behavior', () => {
 
   it('parses multiple markers from a single stdout chunk', async () => {
     const onOutput = vi.fn(async () => {});
-    const resultPromise = runContainerAgent(testGroup, testInput, () => {}, onOutput);
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
 
     const first = `${OUTPUT_START_MARKER}\n${JSON.stringify({ status: 'success', result: null, event: { type: 'status', text: 'step 1' } })}\n${OUTPUT_END_MARKER}`;
     const second = `${OUTPUT_START_MARKER}\n${JSON.stringify({ status: 'success', result: 'final', newSessionId: 'multi-session' })}\n${OUTPUT_END_MARKER}`;
@@ -407,9 +419,16 @@ describe('container-runner timeout behavior', () => {
 
   it('ignores malformed markers and still parses later valid output', async () => {
     const onOutput = vi.fn(async () => {});
-    const resultPromise = runContainerAgent(testGroup, testInput, () => {}, onOutput);
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
 
-    fakeProc.stdout.push(`${OUTPUT_START_MARKER}\n{not-json}\n${OUTPUT_END_MARKER}`);
+    fakeProc.stdout.push(
+      `${OUTPUT_START_MARKER}\n{not-json}\n${OUTPUT_END_MARKER}`,
+    );
     emitOutputMarker(fakeProc, {
       status: 'success',
       result: 'recovered',
@@ -441,7 +460,12 @@ describe('container-runner timeout behavior', () => {
 
   it('times out even if only stderr is active', async () => {
     const onOutput = vi.fn(async () => {});
-    const resultPromise = runContainerAgent(testGroup, testInput, () => {}, onOutput);
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
 
     fakeProc.stderr.push('still logging\n');
     await vi.advanceTimersByTimeAsync(1829000);
