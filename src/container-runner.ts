@@ -25,6 +25,11 @@ import {
   TIMEZONE,
 } from './config.js';
 import {
+  CompactMode,
+  type NativeCompactOutcome,
+  type NativeCompactRequest,
+} from './compact/native-compact.js';
+import {
   StreamEvent,
   StreamProcessor,
   ProcessOptions,
@@ -61,6 +66,7 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   enableStreaming?: boolean; // Enable streaming output
+  nativeCompact?: NativeCompactRequest;
 }
 
 export interface ContainerOutput {
@@ -76,6 +82,7 @@ export interface ContainerOutput {
   };
   error?: string;
   streamEvents?: StreamEvent[]; // Collected streaming events
+  nativeCompact?: NativeCompactOutcome;
 }
 
 interface VolumeMount {

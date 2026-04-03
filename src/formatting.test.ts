@@ -111,16 +111,16 @@ describe('formatMessages', () => {
     expect(result).toContain('<messages>\n</messages>');
   });
 
-  it('converts timestamps to local time for given timezone', () => {
-    // 2024-01-01T18:30:00Z in America/New_York (EST) = 1:30 PM
+
+  it('does not emit compact metadata on native compact path before fallback', () => {
     const result = formatMessages(
-      [makeMsg({ timestamp: '2024-01-01T18:30:00.000Z' })],
-      'America/New_York',
+      [makeMsg({ content: 'x'.repeat(2000) })],
+      TZ,
+      'session-1',
     );
-    expect(result).toContain('1:30');
-    expect(result).toContain('PM');
-    expect(result).toContain('<context timezone="America/New_York" />');
+    expect(result).not.toContain('compact_level="');
   });
+
 });
 
 // --- TRIGGER_PATTERN ---

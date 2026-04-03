@@ -48,6 +48,23 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   enableStreaming?: boolean;
+  nativeCompact?: NativeCompactRequest;
+}
+
+interface NativeCompactRequest {
+  enabled?: boolean;
+  sessionId?: string;
+  metadata?: {
+    compactMode?: 'rule' | 'native_llm' | 'fallback_rule';
+    requestedNativeCompact?: boolean;
+  };
+}
+
+interface NativeCompactOutcome {
+  attempted: boolean;
+  succeeded: boolean;
+  fallbackToRuleCompact: boolean;
+  reason?: string;
 }
 
 interface ContainerOutput {
@@ -62,6 +79,7 @@ interface ContainerOutput {
     replace?: boolean;
   };
   error?: string;
+  nativeCompact?: NativeCompactOutcome;
 }
 
 interface QueryRunResult {
@@ -72,6 +90,7 @@ interface QueryRunResult {
   lastResultText: string | null;
   lastResultSubtype?: string;
   sawStatusEvent: boolean;
+  nativeCompact?: NativeCompactOutcome;
 }
 
 type AnyRecord = Record<string, unknown>;
@@ -655,6 +674,66 @@ function drainIpcInput(): string[] {
   } catch (err) {
     log(`IPC drain error: ${err instanceof Error ? err.message : String(err)}`);
     return [];
+  }
+}
+
+function shouldAttemptNativeCompact(
+  prompt: string,
+  containerInput: ContainerInput,
+  sessionId: string | undefined,
+): boolean {
+  if (!containerInput.nativeCompact?.enabled) return false;
+  if (!sessionId) return false;
+  if (containerInput.nativeCompact.metadata?.compactMode !== 'native_llm') {
+    return false;
+  }
+  return prompt.length >= 12000;
+}
+
+async function attemptNativeCompact(
+  agent: { invoke: (input: unknown, config?: unknown) => Promise<unknown> },
+  sessionId: string,
+  prompt: string,
+  emitStatus: (text: string, replace?: boolean) => void,
+): Promise<NativeCompactOutcome> {
+  emitStatus('Context window nearing limit. Compacting with primary query model...', true);
+
+  const compactPrompt = [
+    'Compact the current conversation context for continued execution.',
+    'Preserve: primary user intent, constraints, important decisions, pending tasks, active files, errors/fixes, and immediate next step.',
+    'Drop verbose tool noise and repeated intermediate details.',
+    'Return a concise structured summary for continued work.',
+    '',
+    'Current prompt to preserve for continuation:',
+    prompt,
+  ].join('\n');
+
+  try {
+    await agent.invoke(
+      {
+        messages: [{ role: 'user', content: compactPrompt }],
+      },
+      {
+        configurable: { thread_id: sessionId },
+        recursionLimit: 40,
+      },
+    );
+
+    emitStatus('Primary-model compact completed. Continuing with compacted context...', true);
+    return {
+      attempted: true,
+      succeeded: true,
+      fallbackToRuleCompact: false,
+    };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    emitStatus('Primary-model compact failed. Falling back to host rule compaction...', true);
+    return {
+      attempted: true,
+      succeeded: false,
+      fallbackToRuleCompact: true,
+      reason,
+    };
   }
 }
 
@@ -1534,6 +1613,29 @@ async function runQuery(
     recursionLimit: QUERY_RECURSION_LIMIT,
   };
 
+  let nativeCompact: NativeCompactOutcome | undefined;
+  if (shouldAttemptNativeCompact(prompt, containerInput, nextSessionId)) {
+    nativeCompact = await attemptNativeCompact(
+      agent,
+      nextSessionId,
+      prompt,
+      emitStatus,
+    );
+  }
+
+  if (nativeCompact?.fallbackToRuleCompact) {
+    return {
+      newSessionId: nextSessionId,
+      lastAssistantUuid: resumeAt,
+      closedDuringQuery: false,
+      lastAssistantText: '',
+      lastResultText: null,
+      lastResultSubtype: 'compact_fallback',
+      sawStatusEvent,
+      nativeCompact,
+    };
+  }
+
   let result: unknown;
   const queryStartedAt = Date.now();
   const heartbeat = setInterval(() => {
@@ -1587,6 +1689,7 @@ async function runQuery(
       result: finalText,
       newSessionId: nextSessionId,
       lastAssistantUuid: checkpointId,
+      nativeCompact,
     });
   }
 
@@ -1598,6 +1701,7 @@ async function runQuery(
     lastResultText: finalText || null,
     lastResultSubtype: 'success',
     sawStatusEvent,
+    nativeCompact,
   };
 }
 
@@ -1701,6 +1805,19 @@ async function main(): Promise<void> {
         log('Close sentinel consumed during query, exiting');
         break;
       }
+
+      if (queryResult.nativeCompact?.fallbackToRuleCompact) {
+        writeOutput({
+          status: 'error',
+          result: null,
+          newSessionId: sessionId,
+          lastAssistantUuid: resumeAt,
+          error: queryResult.nativeCompact.reason || 'Native compact failed',
+          nativeCompact: queryResult.nativeCompact,
+        });
+        return;
+      }
+
 
       const autoContinueReason = getAutoContinueReason(
         queryResult,

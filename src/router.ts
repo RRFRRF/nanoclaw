@@ -1,7 +1,7 @@
 import { Channel, NewMessage } from './types.js';
 import { formatLocalTime } from './timezone.js';
-import { CompressionLevel, CompactMessage } from './compact/types.js';
-import { preparePromptMessages } from './prompt-context.js';
+import { CompactMessage } from './compact/types.js';
+import { buildCompactionHeader, prepareMessagesForPrompt } from './compact/prompt-preparation.js';
 
 export function escapeXml(s: string): string {
   if (!s) return '';
@@ -16,24 +16,21 @@ export function formatMessages(
   messages: NewMessage[],
   timezone: string,
   sessionId?: string,
+  nativeCompactFailed = false,
 ): string {
   if (!messages || messages.length === 0) {
     return `<context timezone="${escapeXml(timezone)}" />\n<messages>\n</messages>`;
   }
 
   let finalMessages: CompactMessage[] = messages as CompactMessage[];
-  let compressionMetadata = '';
 
-  const prepared = preparePromptMessages(finalMessages, sessionId);
+  const prepared = prepareMessagesForPrompt(
+    finalMessages,
+    sessionId,
+    nativeCompactFailed,
+  );
   finalMessages = prepared.messages;
-
-  if (
-    prepared.compactResult &&
-    prepared.compactResult.level !== CompressionLevel.NONE
-  ) {
-    const { stats, level } = prepared.compactResult;
-    compressionMetadata = ` compact_level="${level}" original_messages="${stats.totalMessages}" compacted="${stats.compactedCount}" tokens_before="${stats.tokensBefore}" tokens_after="${stats.tokensAfter}" compression_ratio="${stats.compressionRatio.toFixed(2)}"`;
-  }
+  const compressionMetadata = buildCompactionHeader(prepared.compactResult);
 
   const lines = finalMessages.map((m) => {
     const displayTime = formatLocalTime(m.timestamp, timezone);

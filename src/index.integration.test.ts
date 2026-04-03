@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { CompactMode } from './compact/native-compact.js';
+
 const state = vi.hoisted(() => {
   const sessions: Record<
     string,
@@ -119,8 +121,8 @@ vi.mock('./compact/index.js', () => ({ compactEngine: {} }));
 vi.mock('./router.js', () => ({
   findChannel: vi.fn(() => state.channel),
   formatMessages: vi.fn(
-    (_messages: any[], _timezone: string, sessionId: string) =>
-      `formatted:${sessionId}`,
+    (_messages: any[], _timezone: string, sessionId: string, nativeCompactFailed?: boolean) =>
+      nativeCompactFailed ? `formatted:${sessionId}:fallback` : `formatted:${sessionId}`,
   ),
   formatOutbound: vi.fn(),
   escapeXml: vi.fn(),
@@ -274,5 +276,87 @@ describe('index orchestration integration', () => {
 
     expect(processed).toBe(true);
     expect(state.queue.notifyIdle).toHaveBeenCalledWith('local:1');
+  });
+
+  it('completes in one pass when native compact path succeeds', async () => {
+    state.db.getMessagesSince.mockReturnValue([
+      {
+        id: 'm1',
+        chat_jid: 'local:1',
+        sender: 'user',
+        sender_name: 'User',
+        content: 'please continue',
+        timestamp: '2026-04-02T01:00:00.000Z',
+        is_from_me: false,
+      },
+    ] as any);
+    state.containerRunner.runContainerAgent.mockImplementation(
+      async (_group: any, input: any, _register: any, onOutput: any) => {
+        expect(input).toEqual(
+          expect.objectContaining({
+            prompt: 'formatted:session-2',
+            sessionId: 'session-2',
+            resumeAt: undefined,
+          }),
+        );
+
+        await onOutput({
+          status: 'success',
+          result: 'native compact final answer',
+          newSessionId: 'session-native-2',
+          lastAssistantUuid: 'assistant-native-2',
+        });
+
+        return {
+          status: 'success',
+          result: null,
+          newSessionId: 'session-native-2',
+          lastAssistantUuid: 'assistant-native-2',
+        };
+      },
+    );
+
+    const processed = await __testInternals.processGroupMessages('local:1');
+
+    expect(processed).toBe(true);
+    expect(state.containerRunner.runContainerAgent).toHaveBeenCalledTimes(1);
+    expect(state.channel.sendMessage).toHaveBeenCalledTimes(1);
+    expect(state.channel.sendMessage).toHaveBeenCalledWith(
+      'local:1',
+      'native compact final answer',
+    );
+    expect(state.sessions['local-1']).toEqual({
+      sessionId: 'session-native-2',
+      resumeAt: 'assistant-native-2',
+    });
+  });
+
+  it('stores fallback mode metadata used by the host retry path', () => {
+    __testInternals.upsertSessionState('local-1', {
+      sessionId: 'session-2',
+      resumeAt: null,
+    });
+
+    const fallbackRequest = {
+      enabled: true,
+      sessionId: 'session-2',
+      metadata: {
+        compactMode: CompactMode.FALLBACK_RULE,
+        requestedNativeCompact: true,
+      },
+    };
+
+    expect(fallbackRequest).toEqual({
+      enabled: true,
+      sessionId: 'session-2',
+      metadata: {
+        compactMode: CompactMode.FALLBACK_RULE,
+        requestedNativeCompact: true,
+      },
+    });
+    expect(state.sessions['local-1']).toEqual({
+      sessionId: 'session-2',
+      resumeAt: null,
+    });
   });
 });

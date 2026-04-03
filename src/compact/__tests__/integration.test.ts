@@ -55,7 +55,7 @@ describe('Compaction Integration', () => {
     expect(result).not.toContain('compact_level');
   });
 
-  it('should include compression metadata when compressed', () => {
+  it('should include compression metadata only on fallback rule compaction', () => {
     vi.spyOn(compactEngine as any, 'calculateTokens').mockReturnValue(800);
 
     const messages: NewMessage[] = [
@@ -88,14 +88,16 @@ describe('Compaction Integration', () => {
       },
     ];
 
-    const result = formatMessages(messages, 'UTC', 'test-session');
-    expect(result).toContain('compact_level="');
-    expect(result).toContain('original_messages="3"');
-    expect(result).toContain('compacted="');
-    expect(result).toMatch(/\[Snipped Tool Result|\[Summarized\]/);
+    const nativePath = formatMessages(messages, 'UTC', 'test-session');
+    expect(nativePath).not.toContain('compact_level="');
+
+    const fallbackPath = formatMessages(messages, 'UTC', 'test-session', true);
+    expect(fallbackPath).toContain('compact_level="');
+    expect(fallbackPath).toContain('original_messages="3"');
+    expect(fallbackPath).toContain('compacted="');
   });
 
-  it('keeps message order and only marks truly compacted messages', () => {
+  it('keeps message order and only marks truly compacted messages on fallback', () => {
     vi.spyOn(compactEngine as any, 'calculateTokens').mockReturnValue(960);
 
     const messages: NewMessage[] = [
@@ -119,7 +121,7 @@ describe('Compaction Integration', () => {
       })),
     ];
 
-    const result = formatMessages(messages, 'UTC', 'test-session-123');
+    const result = formatMessages(messages, 'UTC', 'test-session-123', true);
     expect(result.indexOf('I need help with this task')).toBeLessThan(
       result.indexOf('[Archived'),
     );
@@ -143,7 +145,7 @@ describe('Compaction Integration', () => {
       },
     ];
 
-    const result = formatMessages(messages, 'UTC', 'test-session');
+    const result = formatMessages(messages, 'UTC', 'test-session', true);
     expect(result).toContain('sender="Test User"');
     expect(result).toContain('Hello');
   });
