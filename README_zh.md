@@ -1,19 +1,13 @@
 <p align="center">
-  <img src="assets/nanoclaw-logo.png" alt="NanoClaw" width="400">
+  NanoHarness —— 您的专属智能体运行框架，在容器中安全运行 Deep Agents 运行时，专注于长流程任务执行。
 </p>
 
 <p align="center">
-  NanoClaw —— 您的专属 Claude 助手，在容器中安全运行。它轻巧易懂，并能根据您的个人需求灵活定制。
-</p>
-
-<p align="center">
-  <a href="https://nanoclaw.dev">nanoclaw.dev</a>&nbsp; • &nbsp;
+  <a href="https://github.com/RRFRRF/nanoharness">GitHub</a>&nbsp; • &nbsp;
   <a href="README.md">English</a>&nbsp; • &nbsp;
-  <a href="README_ja.md">日本語</a>&nbsp; • &nbsp;
-  <a href="https://discord.gg/VDdww8qS42"><img src="https://img.shields.io/discord/1470188214710046894?label=Discord&logo=discord&v=2" alt="Discord" valign="middle"></a>&nbsp; • &nbsp;
-  <a href="repo-tokens"><img src="repo-tokens/badge.svg" alt="34.9k tokens, 17% of context window" valign="middle"></a>
+  <a href="https://discord.gg/VDdww8qS42"><img src="https://img.shields.io/discord/1470188214710046894?label=Discord&logo=discord&v=2" alt="Discord" valign="middle"></a>
 </p>
-通过 Claude Code，NanoClaw 可以动态重写自身代码，根据您的需求定制功能。
+通过 Claude Code，NanoHarness 可以动态重写自身代码，根据您的需求定制功能。
 
 **新功能：** 首个支持 [Agent Swarms（智能体集群）](https://code.claude.com/docs/en/agent-teams) 的 AI 助手。可轻松组建智能体团队，在您的聊天中高效协作。
 
@@ -21,13 +15,13 @@
 
 [OpenClaw](https://github.com/openclaw/openclaw) 是一个令人印象深刻的项目，但我无法安心使用一个我不了解却能访问我个人隐私的软件。OpenClaw 有近 50 万行代码、53 个配置文件和 70+ 个依赖项。其安全性是应用级别的（通过白名单、配对码实现），而非操作系统级别的隔离。所有东西都在一个共享内存的 Node 进程中运行。
 
-NanoClaw 用一个您能快速理解的代码库，为您提供了同样的核心功能。只有一个进程，少数几个文件。智能体（Agent）运行在具有文件系统隔离的真实 Linux 容器中，而不是依赖于权限检查。
+NanoHarness 用一个您能快速理解的代码库，为您提供了同样的核心功能。只有一个进程，少数几个文件。智能体（Agent）运行在具有文件系统隔离的真实 Linux 容器中，而不是依赖于权限检查。
 
 ## 快速开始
 
 ```bash
-git clone https://github.com/qwibitai/nanoclaw.git
-cd nanoclaw
+gh repo clone RRFRRF/nanoharness
+cd nanoharness
 claude
 ```
 
@@ -49,12 +43,12 @@ claude
 
 **技能（Skills）优于功能（Features）:** 贡献者不应该向代码库添加新功能（例如支持 Telegram）。相反，他们应该贡献像 `/add-telegram` 这样的 [Claude Code 技能](https://code.claude.com/docs/en/skills)，这些技能可以改造您的 fork。最终，您得到的是只做您需要事情的整洁代码。
 
-**最好的工具套件，最好的模型:** 本项目运行在 Claude Agent SDK 之上，这意味着您直接运行的就是 Claude Code。Claude Code 高度强大，其编码和问题解决能力使其能够修改和扩展 NanoClaw，为每个用户量身定制。
+**最好的工具套件，最好的模型:** 本项目以 Deep Agents 运行时为核心，并保持与 Claude Code 工作流对齐。Claude Code 依然是最适合修改和扩展 NanoHarness 的协作界面，适合按个人需求持续定制。
 
 ## 功能支持
 
 - **多渠道消息** - 通过 WhatsApp、Telegram、Discord、Slack 或 Gmail 与您的助手对话。使用 `/add-whatsapp` 或 `/add-telegram` 等技能添加渠道，可同时运行一个或多个。
-- **隔离的群组上下文** - 每个群组都拥有独立的 `CLAUDE.md` 记忆和隔离的文件系统。它们在各自的容器沙箱中运行，且仅挂载所需的文件系统。
+- **隔离的群组上下文** - 每个群组都拥有独立的工作区记忆文件（优先 `AGENTS.md`，迁移期兼容 `CLAUDE.md`）、隔离的文件系统。它们在各自的容器沙箱中运行，且仅挂载所需的文件系统。
 - **主频道** - 您的私有频道（self-chat），用于管理控制；其他所有群组都完全隔离
 - **计划任务** - 运行 Claude 的周期性作业，并可以给您回发消息
 - **网络访问** - 搜索和抓取网页内容
@@ -96,7 +90,7 @@ claude
 
 **不要添加功能，而是添加技能。**
 
-如果您想添加 Telegram 支持，不要创建一个 PR 同时添加 Telegram 和 WhatsApp。而是贡献一个技能文件 (`.claude/skills/add-telegram/SKILL.md`)，教 Claude Code 如何改造一个 NanoClaw 安装以使用 Telegram。
+如果您想添加 Telegram 支持，不要创建一个 PR 同时添加 Telegram 和 WhatsApp。而是贡献一个技能文件 (`.claude/skills/add-telegram/SKILL.md`)，教 Claude Code 如何改造一个 NanoHarness 安装以使用 Telegram。
 
 然后用户在自己的 fork 上运行 `/add-telegram`，就能得到只做他们需要事情的整洁代码，而不是一个试图支持所有用例的臃肿系统。
 
@@ -108,7 +102,7 @@ claude
 - `/add-signal` - 添加 Signal 作为渠道
 
 **会话管理**
-- `/clear` - 添加一个 `/clear` 命令，用于压缩会话（在同一会话中总结上下文，同时保留关键信息）。这需要研究如何通过 Claude Agent SDK 以编程方式触发压缩。
+- `/clear` - 添加一个 `/clear` 命令，用于压缩会话（在同一线程内总结上下文，同时保留关键信息）。这需要研究如何通过当前 Deep Agents / Claude Code 运行时以编程方式触发压缩。
 
 ## 系统要求
 
@@ -120,7 +114,7 @@ claude
 ## 架构
 
 ```
-渠道 --> SQLite --> 轮询循环 --> 容器 (Claude Agent SDK) --> 响应
+渠道 --> SQLite --> 轮询循环 --> 容器（Deep Agents 运行时） --> 响应
 ```
 
 单一 Node.js 进程。渠道通过技能添加，启动时自注册 — 编排器连接具有凭据的渠道。智能体在具有文件系统隔离的 Linux 容器中执行。每个群组的消息队列带有并发控制。通过文件系统进行 IPC。
@@ -136,7 +130,7 @@ claude
 - `src/container-runner.ts` - 生成流式智能体容器
 - `src/task-scheduler.ts` - 运行计划任务
 - `src/db.ts` - SQLite 操作（消息、群组、会话、状态）
-- `groups/*/CLAUDE.md` - 各群组的记忆
+- `groups/*/{AGENTS.md|CLAUDE.md}` - 各群组的工作区记忆
 
 ## FAQ
 
@@ -158,7 +152,7 @@ Docker 提供跨平台支持（macOS 和 Linux）和成熟的生态系统。在 
 
 **我可以使用第三方或开源模型吗？**
 
-可以。NanoClaw 支持任何 API 兼容的模型端点。在 `.env` 文件中设置以下环境变量：
+可以。NanoHarness 支持任何 API 兼容的模型端点。在 `.env` 文件中设置以下环境变量：
 
 ```bash
 ANTHROPIC_BASE_URL=https://your-api-endpoint.com

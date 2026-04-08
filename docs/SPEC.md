@@ -294,13 +294,13 @@ nanoclaw/
 │       ├── convert-to-apple-container/  # /convert-to-apple-container - Apple Container runtime
 │       └── add-parallel/SKILL.md       # /add-parallel - Parallel agents
 │
-├── groups/
-│   ├── CLAUDE.md                  # Global memory (all groups read this)
+│   ├── global/                    # Shared workspace memory mounted read-only for non-main groups
+│   │   └── {AGENTS.md|CLAUDE.md}  # Shared memory files (AGENTS preferred)
 │   ├── {channel}_main/             # Main control channel (e.g., whatsapp_main/)
-│   │   ├── CLAUDE.md              # Main channel memory
+│   │   ├── {AGENTS.md|CLAUDE.md}  # Main channel memory
 │   │   └── logs/                  # Task execution logs
 │   └── {channel}_{group-name}/    # Per-group folders (created on registration)
-│       ├── CLAUDE.md              # Group-specific memory
+│       ├── {AGENTS.md|CLAUDE.md}  # Group-specific workspace memory
 │       ├── logs/                  # Task logs for this group
 │       └── *.md                   # Files created by the agent
 │
@@ -422,27 +422,30 @@ Files with `{{PLACEHOLDER}}` values need to be configured:
 
 ## Memory System
 
-NanoClaw uses a hierarchical memory system based on CLAUDE.md files.
+NanoClaw uses a hierarchical workspace-memory system resolved explicitly by the container runtime.
 
 ### Memory Hierarchy
 
 | Level | Location | Read By | Written By | Purpose |
 |-------|----------|---------|------------|---------|
-| **Global** | `groups/CLAUDE.md` | All groups | Main only | Preferences, facts, context shared across all conversations |
-| **Group** | `groups/{name}/CLAUDE.md` | That group | That group | Group-specific context, conversation memory |
+| **Global** | `groups/global/{AGENTS.md|CLAUDE.md}` | Non-main groups read it via `/workspace/global`; main manages it from the project tree | Main only | Preferences, facts, context shared across all conversations |
+| **Group** | `groups/{name}/{AGENTS.md|CLAUDE.md}` | That group | That group | Group-specific context, conversation memory |
 | **Files** | `groups/{name}/*.md` | That group | That group | Notes, research, documents created during conversation |
 
 ### How Memory Works
 
 1. **Agent Context Loading**
-   - Agent runs with `cwd` set to `groups/{group-name}/`
-   - Claude Agent SDK with `settingSources: ['project']` automatically loads:
-     - `../CLAUDE.md` (parent directory = global memory)
-     - `./CLAUDE.md` (current directory = group memory)
+   - Agent runs with `cwd` set to the group's workspace
+   - The container runtime resolves memory explicitly in this order for each scope:
+     - `AGENTS.md`
+     - `CLAUDE.md` (migration fallback)
+   - Group memory resolves from the group workspace
+   - Global memory resolves from `/workspace/global` for non-main groups when that directory is mounted
+   - Project memory resolves from `/workspace/project` when the main group has the project mounted
 
 2. **Writing Memory**
-   - When user says "remember this", agent writes to `./CLAUDE.md`
-   - When user says "remember this globally" (main channel only), agent writes to `../CLAUDE.md`
+   - When user says "remember this", the agent writes to the group's workspace memory file (`AGENTS.md` when present, otherwise `CLAUDE.md`)
+   - Shared memory updates remain a main-group responsibility
    - Agent can create files like `notes.md`, `research.md` in the group folder
 
 3. **Main Channel Privileges**
@@ -460,8 +463,8 @@ Sessions enable conversation continuity - Claude remembers what you talked about
 ### How Sessions Work
 
 1. Each group has a session ID stored in SQLite (`sessions` table, keyed by `group_folder`)
-2. Session ID is passed to Claude Agent SDK's `resume` option
-3. Claude continues the conversation with full context
+2. Session ID is passed into the Deep Agents thread/checkpoint flow so the same conversation can resume
+3. The runtime continues the conversation with full context
 4. Session transcripts are stored as JSONL files in `data/sessions/{group}/.claude/`
 
 ---
@@ -494,22 +497,22 @@ Sessions enable conversation continuity - Claude remembers what you talked about
    └── Build prompt with full conversation context
    │
    ▼
-7. Router invokes Claude Agent SDK:
-   ├── cwd: groups/{group-name}/
-   ├── prompt: conversation history + current message
-   ├── resume: session_id (for continuity)
-   └── mcpServers: nanoclaw (scheduler)
+7. Router invokes the containerized Deep Agents runtime:
+   ├── cwd: group workspace
+   ├── prompt/context: conversation history + current message
+   ├── session/checkpoint identifiers for continuity
+   └── MCP + NanoHarness tools wired through the runtime bridge
    │
    ▼
-8. Claude processes message:
-   ├── Reads CLAUDE.md files for context
+8. The runtime processes the message:
+   ├── Resolves AGENTS.md / CLAUDE.md workspace memory files
    └── Uses tools as needed (search, email, etc.)
    │
    ▼
 9. Router prefixes response with assistant name and sends via the owning channel
    │
    ▼
-10. Router updates last agent timestamp and saves session ID
+10. Router updates last agent timestamp and saves session state
 ```
 
 ### Trigger Word Matching

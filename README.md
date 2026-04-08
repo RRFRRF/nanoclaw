@@ -1,17 +1,11 @@
 <p align="center">
-  <img src="assets/nanoclaw-logo.png" alt="NanoHarness" width="400">
-</p>
-
-<p align="center">
-  NanoHarness is a personalized agent harness forked from NanoClaw. It keeps the container-first design, replaces the Claude Agent SDK runtime with Deep Agents, and is being tuned for long-running tasks.
+  NanoHarness — a personalized agent harness for long-running tasks, running agents in isolated containers with Deep Agents runtime.
 </p>
 
 <p align="center">
   <a href="https://github.com/RRFRRF/nanoharness">GitHub</a>&nbsp; • &nbsp;
   <a href="README_zh.md">中文</a>&nbsp; • &nbsp;
-  <a href="README_ja.md">日本語</a>&nbsp; • &nbsp;
-  <a href="https://discord.gg/VDdww8qS42"><img src="https://img.shields.io/discord/1470188214710046894?label=Discord&logo=discord&v=2" alt="Discord" valign="middle"></a>&nbsp; • &nbsp;
-  <a href="repo-tokens"><img src="repo-tokens/badge.svg" alt="34.9k tokens, 17% of context window" valign="middle"></a>
+  <a href="https://discord.gg/VDdww8qS42"><img src="https://img.shields.io/discord/1470188214710046894?label=Discord&logo=discord&v=2" alt="Discord" valign="middle"></a>
 </p>
 
 ---
@@ -20,7 +14,7 @@
 
 [OpenClaw](https://github.com/openclaw/openclaw) is an impressive project, but I wouldn't have been able to sleep if I had given complex software I didn't understand full access to my life. OpenClaw has nearly half a million lines of code, 53 config files, and 70+ dependencies. Its security is at the application level (allowlists, pairing codes) rather than true OS-level isolation. Everything runs in one Node process with shared memory.
 
-NanoHarness started as a fork of [NanoClaw](https://github.com/qwibitai/nanoclaw). This fork keeps the small-codebase, container-isolated philosophy, but swaps the underlying Claude Agent SDK runtime for Deep Agents and focuses on stable execution of long-running tasks. The project is actively evolving and still under development.
+NanoHarness started as a fork of [NanoClaw](https://github.com/qwibitai/nanoclaw). This fork keeps the small-codebase, container-isolated philosophy, uses Deep Agents as the runtime, and focuses on stable execution of long-running tasks. The project is actively evolving and still under development.
 
 ## Quick Start
 
@@ -61,12 +55,12 @@ Then run `/setup`. Claude Code handles everything: dependencies, authentication,
 
 **Skills over features.** Instead of adding features (e.g. support for Telegram) to the codebase, contributors submit [claude code skills](https://code.claude.com/docs/en/skills) like `/add-telegram` that transform your fork. You end up with clean code that does exactly what you need.
 
-**Forked for long-running work.** NanoHarness is a NanoClaw fork that replaces the Claude Agent SDK runtime with Deep Agents. The current focus is making long-running task execution more robust, resumable, and easier to observe.
+**Forked for long-running work.** NanoHarness is a NanoClaw fork that uses Deep Agents as the runtime. The current focus is making long-running task execution more robust, resumable, and easier to observe.
 
 ## What It Supports
 
 - **Multi-channel messaging** - Talk to your assistant from WhatsApp, Telegram, Discord, Slack, or Gmail. Add channels with skills like `/add-whatsapp` or `/add-telegram`. Run one or many at the same time.
-- **Isolated group context** - Each group has its own `CLAUDE.md` memory, isolated filesystem, and runs in its own container sandbox with only that filesystem mounted to it.
+- **Isolated group context** - Each group keeps its own workspace memory file (`AGENTS.md`, with `CLAUDE.md` fallback during migration), isolated filesystem, and runs in its own container sandbox with only that filesystem mounted to it.
 - **Main channel** - Your private channel (self-chat) for admin control; every group is completely isolated
 - **Scheduled tasks** - Recurring jobs that run Claude and can message you back
 - **Web access** - Search and fetch content from the Web
@@ -181,7 +175,7 @@ Key files:
 - `src/container-runner.ts` - Spawns streaming agent containers
 - `src/task-scheduler.ts` - Runs scheduled tasks
 - `src/db.ts` - SQLite operations (messages, groups, sessions, state)
-- `groups/*/CLAUDE.md` - Per-group memory
+- `groups/*/{AGENTS.md|CLAUDE.md}` - Per-group workspace memory
 
 ## FAQ
 

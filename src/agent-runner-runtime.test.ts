@@ -419,18 +419,25 @@ describe('agent runner runtime diagnostics', () => {
       'For multi-step or stateful work, create and maintain a todo list with write_todos/read_todos.',
     );
     expect(bundle.runtimePrompt).toContain(
+      'Available predefined subagents: researcher, coder, reviewer.',
+    );
+    expect(bundle.runtimePrompt).toContain(
+      'Prefer researcher for investigation, coder for implementation, and reviewer for findings-first critique.',
+    );
+    expect(bundle.runtimePrompt).toContain(
+      'Use the predefined names directly when possible.',
+    );
+    expect(bundle.runtimePrompt).not.toContain(
       'Available predefined subagents: researcher for investigation, coder for implementation, reviewer for findings-first review.',
     );
-    expect(bundle.runtimePrompt).toContain(
+    expect(bundle.runtimePrompt).not.toContain(
       'Delegate to researcher for codebase investigation or option comparison, coder for concrete implementation, and reviewer for regression-focused critique.',
     );
-    expect(bundle.runtimePrompt).toContain(
+    expect(bundle.runtimePrompt).not.toContain(
       'When delegating, prefer the exact task names researcher, coder, or reviewer before falling back to general-purpose delegation.',
     );
-    expect(bundle.runtimePrompt).toContain('<group_memory>');
-    expect(bundle.runtimePrompt).toContain('group memory');
-    expect(bundle.runtimePrompt).toContain('<project_memory>');
-    expect(bundle.runtimePrompt).toContain('project memory');
+    expect(bundle.runtimePrompt).not.toContain('<group_memory>');
+    expect(bundle.runtimePrompt).not.toContain('<project_memory>');
     expect(bundle.runtimePrompt).not.toContain(
       '<message sender="user" time="2026-04-01 10:00">test</message>',
     );
@@ -455,7 +462,7 @@ describe('agent runner runtime diagnostics', () => {
     });
   });
 
-  it('can switch CLAUDE.md files to native deepagents memory paths', async () => {
+  it('always uses native deepagents memory paths and avoids prompt-injected memory blocks', async () => {
     const mod = await loadRuntimeModule();
 
     expect(
@@ -463,8 +470,6 @@ describe('agent runner runtime diagnostics', () => {
         isMain: true,
       }),
     ).toEqual(['./group/CLAUDE.md', './project/CLAUDE.md']);
-
-    process.env.NANOCLAW_USE_NATIVE_MEMORY = 'true';
 
     const bundle = mod.buildRuntimePromptBundle(
       '<messages>\n<message sender="user">test</message>\n</messages>',
@@ -481,11 +486,12 @@ describe('agent runner runtime diagnostics', () => {
 
     expect(bundle.runtimePrompt).not.toContain('<group_memory>');
     expect(bundle.runtimePrompt).not.toContain('<project_memory>');
-
-    delete process.env.NANOCLAW_USE_NATIVE_MEMORY;
+    expect(bundle.runtimePrompt).not.toContain('group memory');
+    expect(bundle.runtimePrompt).not.toContain('project memory');
   });
 
-  it('prefers AGENTS.md over CLAUDE.md for native and prompt memory resolution', async () => {
+
+  it('prefers AGENTS.md over CLAUDE.md for native memory resolution metadata', async () => {
     const mod = await loadRuntimeModule();
 
     fsState.existingPaths.add('/workspace/group/AGENTS.md');
@@ -510,8 +516,8 @@ describe('agent runner runtime diagnostics', () => {
       },
     );
 
-    expect(bundle.runtimePrompt).toContain('group agents memory');
-    expect(bundle.runtimePrompt).toContain('project agents memory');
+    expect(bundle.runtimePrompt).not.toContain('group agents memory');
+    expect(bundle.runtimePrompt).not.toContain('project agents memory');
     expect(bundle.snapshot.memories.group.path).toBe(
       '/workspace/group/AGENTS.md',
     );
@@ -519,6 +525,7 @@ describe('agent runner runtime diagnostics', () => {
       '/workspace/project/AGENTS.md',
     );
   });
+
 
   it('can opt back into persisting full runtime context content for debugging', async () => {
     const mod = await loadRuntimeModule();
@@ -1082,18 +1089,24 @@ describe('agent runner runtime diagnostics', () => {
       [{ name: 'mcp__nanoclaw__ask_user' }, { name: 'mcp__docs__lookup' }],
     ]);
     expect(subagents[0].systemPrompt).toContain('researcher subagent');
-    expect(subagents[1].systemPrompt).toContain('exact task identity coder');
+    expect(subagents[0].systemPrompt).toContain(
+      'Investigate, trace behavior, compare options, and return concise findings',
+    );
+    expect(subagents[1].systemPrompt).toContain('coder subagent');
+    expect(subagents[1].systemPrompt).toContain(
+      'Make the smallest correct code changes',
+    );
+    expect(subagents[2].systemPrompt).toContain('reviewer subagent');
     expect(subagents[2].systemPrompt).toContain(
-      'Return findings first, ordered by severity',
+      'return findings first',
     );
 
     delete process.env.NANOCLAW_SUBAGENT_REVIEWER_MODEL;
   });
 
-  it('can opt predefined subagents into main or role-specific skills explicitly', async () => {
+  it('keeps predefined subagent skills role-specific only', async () => {
     const mod = await loadRuntimeModule();
 
-    process.env.NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS = 'true';
     process.env.NANOCLAW_SUBAGENT_REVIEWER_SKILLS =
       '/skills/reviewer,/skills/shared';
 
@@ -1104,21 +1117,13 @@ describe('agent runner runtime diagnostics', () => {
       tools: [{ name: 'mcp__docs__lookup' }],
     });
 
-    expect(subagents[0].skills).toEqual([
-      '/workspace/group/.deepagents-skills',
-    ]);
-    expect(subagents[1].skills).toEqual([
-      '/workspace/group/.deepagents-skills',
-    ]);
-    expect(subagents[2].skills).toEqual([
-      '/workspace/group/.deepagents-skills',
-      '/skills/reviewer',
-      '/skills/shared',
-    ]);
+    expect(subagents[0].skills).toEqual([]);
+    expect(subagents[1].skills).toEqual([]);
+    expect(subagents[2].skills).toEqual(['/skills/reviewer', '/skills/shared']);
 
-    delete process.env.NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS;
     delete process.env.NANOCLAW_SUBAGENT_REVIEWER_SKILLS;
   });
+
 
   it('can disable predefined subagents with an environment flag', async () => {
     const mod = await loadRuntimeModule();
@@ -1161,7 +1166,7 @@ describe('agent runner runtime diagnostics', () => {
     );
 
     expect(bundle.runtimePrompt).not.toContain(
-      'Available predefined subagents: researcher for investigation, coder for implementation, reviewer for findings-first review.',
+      'Available predefined subagents: researcher, coder, reviewer.',
     );
     expect(bundle.runtimePrompt).toContain(
       'Use task delegation only when extra context isolation is clearly helpful.',
@@ -1213,7 +1218,7 @@ describe('agent runner runtime diagnostics', () => {
     });
   });
 
-  it('maps updates stream chunks into decision and tool lifecycle bridge events', async () => {
+  it('maps updates stream chunks into tool lifecycle bridge events', async () => {
     const mod = await loadRuntimeModule();
 
     const events = mod.mapNativeStreamChunkToBridgeEvents([
@@ -1249,16 +1254,6 @@ describe('agent runner runtime diagnostics', () => {
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          type: 'decision',
-          description: 'Native stream update',
-          choice: 'model_request',
-        }),
-        expect.objectContaining({
-          type: 'decision',
-          description: 'Native stream update',
-          choice: 'tools',
-        }),
-        expect.objectContaining({
           type: 'tool_start',
           key: 'main:call_task_1',
           name: 'task',
@@ -1272,9 +1267,10 @@ describe('agent runner runtime diagnostics', () => {
         }),
       ]),
     );
+    expect(events.some((event) => event.type === 'decision')).toBe(false);
   });
 
-  it('maps messages stream chunks into tool and content bridge events', async () => {
+  it('maps messages stream chunks into tool and content bridge events without internal decisions', async () => {
     const mod = await loadRuntimeModule();
 
     const toolEvents = mod.mapNativeStreamChunkToBridgeEvents([
@@ -1296,23 +1292,18 @@ describe('agent runner runtime diagnostics', () => {
       ],
     ]);
 
-    expect(toolEvents).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: 'decision',
-          choice: 'tools',
-        }),
-        expect.objectContaining({
-          type: 'tool_start',
-          key: 'tools:call_abc123:tool_1',
-          name: 'grep',
-          input: { pattern: 'TODO' },
-        }),
-      ]),
-    );
+    expect(toolEvents).toEqual([
+      expect.objectContaining({
+        type: 'tool_start',
+        key: 'tools:call_abc123:tool_1',
+        name: 'grep',
+        input: { pattern: 'TODO' },
+      }),
+    ]);
     expect(toolEvents.some((event) => event.type === 'tool_progress')).toBe(
       false,
     );
+    expect(toolEvents.some((event) => event.type === 'decision')).toBe(false);
 
     const contentEvents = mod.mapNativeStreamChunkToBridgeEvents([
       [],
@@ -1327,18 +1318,12 @@ describe('agent runner runtime diagnostics', () => {
       ],
     ]);
 
-    expect(contentEvents).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: 'decision',
-          choice: 'model_request',
-        }),
-        expect.objectContaining({
-          type: 'content',
-          text: 'final token',
-        }),
-      ]),
-    );
+    expect(contentEvents).toEqual([
+      expect.objectContaining({
+        type: 'content',
+        text: 'final token',
+      }),
+    ]);
   });
 
   it('maps custom stream chunks into tool progress bridge events', async () => {

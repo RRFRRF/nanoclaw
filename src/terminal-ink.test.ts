@@ -34,6 +34,48 @@ describe('TerminalInkStore', () => {
     expect(store.getSnapshot().liveMessage?.text).toBe('Hi there!');
   });
 
+  it('does not flush live agent content when status messages arrive', () => {
+    const store = new TerminalInkStore();
+
+    store.addMessage({
+      id: 'm1',
+      label: 'agent:test',
+      text: '我目前可用的 skill',
+      tone: 'agent',
+      mergeKey: 'local:test:t0',
+      mergeMode: 'append',
+    });
+    store.addMessage({
+      id: 's1',
+      label: 'status:test',
+      text: 'Still working inside the container. Elapsed 20s.',
+      tone: 'status',
+    });
+    store.addMessage({
+      id: 'm2',
+      label: 'agent:test',
+      text: ' 还有这些工具',
+      tone: 'agent',
+      mergeKey: 'local:test:t0',
+      mergeMode: 'append',
+    });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.messages).toEqual([
+      expect.objectContaining({
+        label: 'status:test',
+        text: 'Still working inside the container. Elapsed 20s.',
+        tone: 'status',
+      }),
+    ]);
+    expect(snapshot.liveMessage).toMatchObject({
+      label: 'agent:test',
+      mergeKey: 'local:test:t0',
+      text: '我目前可用的 skill 还有这些工具',
+      tone: 'agent',
+    });
+  });
+
   it('does not merge messages across different merge keys (turn isolation)', () => {
     const store = new TerminalInkStore();
 

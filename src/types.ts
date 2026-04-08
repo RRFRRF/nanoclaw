@@ -77,7 +77,7 @@ export interface TaskRunLog {
   error: string | null;
 }
 
-import { StreamEvent } from './streaming/types.js';
+import type { StreamEvent } from './streaming/types.js';
 
 export interface SessionState {
   sessionId: string;

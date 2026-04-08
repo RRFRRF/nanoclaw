@@ -12,7 +12,7 @@ Host (macOS / Windows WSL)
     │   └── Container spawner → nested Docker daemon
     └── Docker-in-Docker
         └── nanoclaw-agent containers
-            └── Claude Agent SDK
+            └── Deep Agents runtime
 ```
 
 Each agent runs in its own container, inside a micro VM that is fully isolated from your host. Two layers of isolation: per-agent containers + the VM boundary.

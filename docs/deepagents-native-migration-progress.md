@@ -15,15 +15,12 @@ Updated: 2026-04-07
 
 ### 2026-04-07
 
-- Replaced container-side custom compact trigger flow with native middleware loading in `container/agent-runner/src/index.ts`.
-- Added compatibility-aware middleware loading that supports multiple summarization export styles.
-- Removed host-side fallback rerun logic that depended on `nativeCompact.fallbackToRuleCompact`.
+- Removed host-side fallback rerun logic that depended on legacy compact metadata.
 - Simplified prompt formatting to a single standard path in:
   - `src/prompt-context.ts`
   - `src/compact/prompt-preparation.ts`
   - `src/router.ts`
 - Updated tests to reflect the new standard-formatting behavior.
-- Added a regression test proving the host no longer retries a fallback compact run when legacy metadata is present.
 - Added runtime prompt guidance for `write_todos` and `read_todos`.
 - Added predefined subagents in `container/agent-runner/src/index.ts`:
   - `researcher`
@@ -32,16 +29,10 @@ Updated: 2026-04-07
 - Scoped subagent custom tools to non-NanoHarness MCP tools by filtering out `mcp__nanoclaw__*`.
 - Tightened subagent defaults so `researcher` and `reviewer` only receive read-oriented custom tools by default, while `coder` can receive the wider non-NanoHarness custom tool set.
 - Added an environment flag to disable predefined subagents: `NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS=false`.
-- Corrected predefined subagent skill inheritance to match the official DeepAgents subagent docs:
-  - predefined subagents now default to isolated `skills: []`
-  - main-agent skills are only propagated when `NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS=true`
+- Predefined subagents now stay role-specific:
+  - predefined subagents default to isolated `skills: []`
   - role-specific skill roots can be injected with `NANOCLAW_SUBAGENT_RESEARCHER_SKILLS`, `NANOCLAW_SUBAGENT_CODER_SKILLS`, and `NANOCLAW_SUBAGENT_REVIEWER_SKILLS`
-- Added an opt-in native memory path for DeepAgents `memory` loading:
-  - `NANOCLAW_USE_NATIVE_MEMORY=true` passes existing `CLAUDE.md` files through `createDeepAgent({ memory: [...] })`
-  - manual `<group_memory>`, `<global_memory>`, and `<project_memory>` prompt injection is skipped when the native memory path is enabled
-- Added memory file resolution that prefers official `AGENTS.md` files and falls back to legacy `CLAUDE.md` files:
-  - native `memory: [...]` path generation and legacy prompt injection now share the same resolution logic
-  - this keeps NanoHarness backward compatible while aligning new deployments with DeepAgents' documented memory conventions
+- Added memory file resolution that prefers official `AGENTS.md` files and falls back to legacy `CLAUDE.md` files.
 - Added explicit DeepAgents main-agent naming based on `assistantName` or NanoHarness role defaults so trace metadata and stream attribution remain stable.
 - Cleaned up the runtime prompt compatibility layer so it now describes DeepAgents native harness capabilities directly instead of carrying the older Claude-style tool mapping table.
 - Further reduced runtime prompt duplication by removing planning and skills guidance that DeepAgents already injects through its built-in harness prompts; the NanoHarness runtime prompt now focuses on platform boundaries and custom delegation policy.
@@ -74,15 +65,12 @@ Updated: 2026-04-07
 - Added optional native interrupt policy wiring through `NANOCLAW_INTERRUPT_ON_JSON` so DeepAgents `interruptOn` can be enabled without changing the host protocol.
 - Fixed host-to-container env passthrough so native runtime flags now reach real container runs:
   - `NANOCLAW_INTERRUPT_ON_JSON`
-  - `NANOCLAW_USE_NATIVE_MEMORY`
   - predefined subagent toggles, skills, and model overrides
-  - summarization compatibility toggles
 - Added runtime tests for:
   - interrupt payload extraction
   - human-in-the-loop prompt formatting
   - resume payload parsing for single-action, multi-action, and generic interrupt flows
 - Removed default explicit `SummarizationMiddleware` injection from the container runtime after validating the official handbook: DeepAgents already provides built-in summarization/offloading, and double-registration caused startup failure.
-- Added an escape hatch `NANOCLAW_FORCE_LANGCHAIN_SUMMARIZATION_MIDDLEWARE=true` for compatibility experiments only; default behavior now relies on the native DeepAgents harness path.
 - Moved NanoHarness runtime instructions onto the DeepAgents main `systemPrompt` path and now pass runtime metadata through DeepAgents `context` instead of embedding harness instructions inside a synthetic user message.
 - Tightened native stream debug logging:
   - debug logging is now opt-in instead of effectively on-by-default

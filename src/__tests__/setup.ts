@@ -108,7 +108,6 @@ vi.mock('../config.js', () => ({
   STREAMING_CONFIG: {
     ENABLED: true,
     SHOW_THINKING: true,
-    THINKING_COLLAPSED: false,
     SHOW_PLAN: true,
     SHOW_TOOLS: true,
     BUFFER_SIZE: 1000,

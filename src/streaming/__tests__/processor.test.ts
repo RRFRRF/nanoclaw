@@ -46,12 +46,9 @@ ${JSON.stringify(event)}
 describe('StreamProcessor', () => {
   let processor: StreamProcessor;
   const defaultOptions: ProcessOptions = {
-    sessionId: 'test-session',
-    groupName: 'test-group',
     showThinking: true,
     showPlan: true,
     showTools: true,
-    collapseThinking: false,
     maxEvents: 100,
   };
 
@@ -140,6 +137,37 @@ describe('StreamProcessor', () => {
       );
 
       const status = processor.getCurrentStatus();
+      expect(status.progress).toBe(75);
+    });
+
+    it('clears active tool and keeps latest progress state consistent after completion', () => {
+      processor.processChunk(
+        createEventChunk('tool_start', {
+          toolId: 't1',
+          name: 'active_tool',
+          input: {},
+        }),
+      );
+      processor.processChunk(
+        createEventChunk('tool_progress', {
+          toolId: 't1',
+          name: 'active_tool',
+          message: 'Progress',
+          percent: 75,
+        }),
+      );
+      processor.processChunk(
+        createEventChunk('tool_complete', {
+          toolId: 't1',
+          name: 'active_tool',
+          duration: 100,
+          result: null,
+        }),
+      );
+
+      const status = processor.getCurrentStatus();
+      expect(status.activeTool).toBeUndefined();
+      expect(processor.getActiveTools()).toHaveLength(0);
       expect(status.progress).toBe(75);
     });
 

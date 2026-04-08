@@ -12,12 +12,6 @@ import {
   ThinkingEventData,
   PlanEventData,
   PlanStepEventData,
-  ToolStartEventData,
-  ToolProgressEventData,
-  ToolCompleteEventData,
-  DecisionEventData,
-  ContentEventData,
-  ErrorEventData,
 } from './types.js';
 
 // Parser configuration
@@ -38,11 +32,10 @@ const DEFAULT_CONFIG: ParserConfig = {
  * Parses raw stream output into structured StreamEvent objects
  */
 export class StreamParser {
-  private buffer: string = '';
+  private buffer = '';
   private config: ParserConfig;
-  private currentThinking: string = '';
+  private currentThinking = '';
   private currentPlan: PlanStep[] = [];
-  private parsingState: 'idle' | 'thinking' | 'plan' | 'content' = 'idle';
 
   constructor(config: Partial<ParserConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -76,10 +69,6 @@ export class StreamParser {
    * Try to parse the next event from buffer
    */
   private tryParseNextEvent(): StreamEvent | null {
-    if (this.parsingState !== 'idle') {
-      return null;
-    }
-
     const nextMarker = this.findNextMarker();
     if (!nextMarker) {
       return null;
@@ -530,7 +519,6 @@ export class StreamParser {
     this.buffer = '';
     this.currentThinking = '';
     this.currentPlan = [];
-    this.parsingState = 'idle';
   }
 
   /**

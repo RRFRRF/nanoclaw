@@ -3,7 +3,7 @@ name: debug
 description: Debug container agent issues. Use when things aren't working, container fails, authentication problems, or to understand how the container system works. Covers logs, environment variables, mounts, and common issues.
 ---
 
-# NanoClaw Container Debugging
+# NanoHarness Container Debugging
 
 This guide covers debugging the containerized agent execution system.
 
@@ -14,7 +14,7 @@ Host (macOS)                          Container (Linux VM)
 ─────────────────────────────────────────────────────────────
 src/container-runner.ts               container/agent-runner/
     │                                      │
-    │ spawns container                      │ runs Claude Agent SDK
+    │ spawns container                      │ runs Deep Agents runtime
     │ with volume mounts                   │ with MCP servers
     │                                      │
     ├── data/env/env ──────────────> /workspace/env-dir/env
@@ -33,7 +33,7 @@ src/container-runner.ts               container/agent-runner/
 | **Main app logs** | `logs/nanoclaw.log` | Host-side WhatsApp, routing, container spawning |
 | **Main app errors** | `logs/nanoclaw.error.log` | Host-side errors |
 | **Container run logs** | `groups/{folder}/logs/container-*.log` | Per-run: input, mounts, stderr, stdout |
-| **Claude sessions** | `~/.claude/projects/` | Claude Code session history |
+| **Claude sessions** | `~/.claude/projects/` | Claude Code / Deep Agents session history |
 
 ## Enabling Debug Logging
 
@@ -118,7 +118,7 @@ Expected structure:
 ├── env-dir/env           # Environment file (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY)
 ├── group/                # Current group folder (cwd)
 ├── project/              # Project root (main channel only)
-├── global/               # Global CLAUDE.md (non-main only)
+├── global/               # Global AGENTS.md / CLAUDE.md (non-main only)
 ├── ipc/                  # Inter-process communication
 │   ├── messages/         # Outgoing WhatsApp messages
 │   ├── tasks/            # Scheduled task commands
@@ -144,7 +144,7 @@ All of `/workspace/` and `/app/` should be owned by `node`.
 
 If sessions aren't being resumed (new session ID every time), or Claude Code exits with code 1 when resuming:
 
-**Root cause:** The SDK looks for sessions at `$HOME/.claude/projects/`. Inside the container, `HOME=/home/node`, so it looks at `/home/node/.claude/projects/`.
+**Root cause:** The runtime looks for sessions at `$HOME/.claude/projects/`. Inside the container, `HOME=/home/node`, so it looks at `/home/node/.claude/projects/`.
 
 **Check the mount path:**
 ```bash
@@ -207,25 +207,41 @@ docker run --rm --entrypoint /bin/bash \
 docker run --rm -it --entrypoint /bin/bash nanoclaw-agent:latest
 ```
 
-## SDK Options Reference
+## Runtime Invocation Reference
 
-The agent-runner uses these Claude Agent SDK options:
+The agent-runner no longer uses the old Claude Agent SDK `query({...})` shape. It builds a Deep Agents runtime roughly like this:
 
 ```typescript
-query({
-  prompt: input.prompt,
-  options: {
-    cwd: '/workspace/group',
-    allowedTools: ['Bash', 'Read', 'Write', ...],
-    permissionMode: 'bypassPermissions',
-    allowDangerouslySkipPermissions: true,  // Required with bypassPermissions
-    settingSources: ['project'],
-    mcpServers: { ... }
-  }
-})
+const agent = await createDeepAgent({
+  name: getDeepAgentName(containerInput),
+  model,
+  systemPrompt: runtimePromptBundle.runtimePrompt,
+  contextSchema: deepAgentRuntimeContextSchema,
+  backend,
+  tools,
+  skills,
+  memory,
+  checkpointer,
+  middleware,
+  subagents,
+  interruptOn,
+});
+
+const result = await agent.invoke(
+  { messages: [{ role: 'user', content: userPrompt }] },
+  {
+    configurable: { thread_id: nextSessionId },
+    context: buildDeepAgentRuntimeContext(containerInput, { sessionId: nextSessionId }),
+    recursionLimit: QUERY_RECURSION_LIMIT,
+  },
+);
 ```
 
-**Important:** `allowDangerouslySkipPermissions: true` is required when using `permissionMode: 'bypassPermissions'`. Without it, Claude Code exits with code 1.
+When debugging runtime issues, inspect these current pieces instead of old SDK-only flags:
+- `memory` path resolution (`AGENTS.md` / `CLAUDE.md`, `/workspace/global`, `/workspace/project`)
+- `checkpointer` state under `/home/node/.claude/`
+- `tools`, `skills`, `subagents`, and loaded MCP tool sets
+- invoke/stream fallback behavior in `container/agent-runner/src/index.ts`
 
 ## Rebuilding After Changes
 

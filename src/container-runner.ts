@@ -24,30 +24,22 @@ import {
   NANOCLAW_DEBUG_NATIVE_STREAM,
   NANOCLAW_DISABLE_NATIVE_STREAM_FALLBACK,
   NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS,
-  NANOCLAW_ENABLE_SUMMARIZATION,
-  NANOCLAW_FORCE_LANGCHAIN_SUMMARIZATION_MIDDLEWARE,
   NANOCLAW_INTERRUPT_ON_JSON,
   NANOCLAW_PERSIST_RUNTIME_CONTEXT_CONTENT,
   NANOCLAW_RESEARCHER_MODEL,
   NANOCLAW_REVIEWER_MODEL,
+  NANOCLAW_STREAM_CONTENT_FROM_NATIVE,
   NANOCLAW_SUBAGENT_CODER_MODEL,
   NANOCLAW_SUBAGENT_CODER_SKILLS,
   NANOCLAW_SUBAGENT_RESEARCHER_MODEL,
   NANOCLAW_SUBAGENT_RESEARCHER_SKILLS,
   NANOCLAW_SUBAGENT_REVIEWER_MODEL,
   NANOCLAW_SUBAGENT_REVIEWER_SKILLS,
-  NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS,
-  NANOCLAW_STREAM_CONTENT_FROM_NATIVE,
   NANOCLAW_USE_NATIVE_STREAMING,
-  NANOCLAW_USE_NATIVE_MEMORY,
   OPENAI_MODEL,
   STREAMING_CONFIG,
   TIMEZONE,
 } from './config.js';
-import {
-  type NativeCompactOutcome,
-  type NativeCompactRequest,
-} from './compact/native-compact.js';
 import {
   StreamEvent,
   StreamProcessor,
@@ -85,7 +77,6 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   enableStreaming?: boolean; // Enable streaming output
-  nativeCompact?: NativeCompactRequest;
 }
 
 export interface ContainerOutput {
@@ -100,8 +91,6 @@ export interface ContainerOutput {
     replace?: boolean;
   };
   error?: string;
-  streamEvents?: StreamEvent[]; // Collected streaming events
-  nativeCompact?: NativeCompactOutcome;
 }
 
 const QUERY_START_STATUS_TEXT = 'Starting Deep Agents query...';
@@ -470,21 +459,8 @@ function buildContainerArgs(
     ['NANOCLAW_AGENT_MAX_RETRIES', process.env.NANOCLAW_AGENT_MAX_RETRIES],
     ['NANOCLAW_AGENT_RETRY_BASE_MS', process.env.NANOCLAW_AGENT_RETRY_BASE_MS],
     ['NANOCLAW_MCP_SERVERS_JSON', process.env.NANOCLAW_MCP_SERVERS_JSON],
-    ['NANOCLAW_ENABLE_SUMMARIZATION', NANOCLAW_ENABLE_SUMMARIZATION],
-    [
-      'NANOCLAW_FORCE_LANGCHAIN_SUMMARIZATION_MIDDLEWARE',
-      NANOCLAW_FORCE_LANGCHAIN_SUMMARIZATION_MIDDLEWARE,
-    ],
-    [
-      'NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS',
-      NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS,
-    ],
-    ['NANOCLAW_USE_NATIVE_MEMORY', NANOCLAW_USE_NATIVE_MEMORY],
+    ['NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS', NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS],
     ['NANOCLAW_INTERRUPT_ON_JSON', NANOCLAW_INTERRUPT_ON_JSON],
-    [
-      'NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS',
-      NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS,
-    ],
     [
       'NANOCLAW_SUBAGENT_RESEARCHER_SKILLS',
       NANOCLAW_SUBAGENT_RESEARCHER_SKILLS,
@@ -501,7 +477,6 @@ function buildContainerArgs(
     ['NANOCLAW_SHOW_THINKING', process.env.NANOCLAW_SHOW_THINKING],
     ['NANOCLAW_SHOW_PLAN', process.env.NANOCLAW_SHOW_PLAN],
     ['NANOCLAW_SHOW_TOOLS', process.env.NANOCLAW_SHOW_TOOLS],
-    ['NANOCLAW_THINKING_COLLAPSED', process.env.NANOCLAW_THINKING_COLLAPSED],
     ['NANOCLAW_STREAM_BUFFER_SIZE', process.env.NANOCLAW_STREAM_BUFFER_SIZE],
     ['NANOCLAW_USE_NATIVE_STREAMING', NANOCLAW_USE_NATIVE_STREAMING],
     [
@@ -635,21 +610,12 @@ export async function runContainerAgent(
     const streamingEnabled =
       input.enableStreaming !== false && STREAMING_CONFIG.ENABLED;
     let streamProcessor: StreamProcessor | null = null;
-    const streamEvents: StreamEvent[] = [];
-
-    const lifecycle = createContainerLifecycleState(
-      input.sessionId,
-      input.resumeAt,
-    );
-
+    const lifecycle = createContainerLifecycleState(group.name, containerName);
     if (streamingEnabled) {
       const processorOptions: ProcessOptions = {
-        sessionId: input.sessionId || `new-${Date.now()}`,
-        groupName: group.name,
         showThinking: STREAMING_CONFIG.SHOW_THINKING,
         showPlan: STREAMING_CONFIG.SHOW_PLAN,
         showTools: STREAMING_CONFIG.SHOW_TOOLS,
-        collapseThinking: STREAMING_CONFIG.THINKING_COLLAPSED,
         maxEvents: STREAMING_CONFIG.MAX_EVENTS,
         emitResidualBufferErrors: false,
       };
@@ -681,7 +647,6 @@ export async function runContainerAgent(
       options?: { resetTimer?: boolean },
     ) => {
       for (const event of events) {
-        streamEvents.push(event);
         if (onStreamEvent) {
           outputChain = outputChain.then(() => onStreamEvent(event));
         }
@@ -896,7 +861,6 @@ export async function runContainerAgent(
               status: 'error',
               result: null,
               error: `Container query made no meaningful progress for ${queryProgressTimeoutMs}ms`,
-              streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
             });
           });
           return;
@@ -916,7 +880,6 @@ export async function runContainerAgent(
               result: null,
               newSessionId: lifecycle.newSessionId,
               lastAssistantUuid: lifecycle.lastAssistantUuid,
-              streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
             });
           });
           return;
@@ -932,7 +895,6 @@ export async function runContainerAgent(
             status: 'error',
             result: null,
             error: `Container timed out after ${configTimeout}ms`,
-            streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
           });
         });
         return;
@@ -1032,7 +994,6 @@ export async function runContainerAgent(
             status: 'error',
             result: null,
             error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
-            streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
           });
         });
         return;
@@ -1054,7 +1015,6 @@ export async function runContainerAgent(
             result: null,
             newSessionId: lifecycle.newSessionId,
             lastAssistantUuid: lifecycle.lastAssistantUuid,
-            streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
           });
         });
         return;
@@ -1089,11 +1049,6 @@ export async function runContainerAgent(
           'Container completed',
         );
 
-        // Add streaming events to output
-        if (streamEvents.length > 0) {
-          output.streamEvents = streamEvents;
-        }
-
         outputChain.then(() => resolve(output));
       } catch (err) {
         logger.error(
@@ -1111,7 +1066,6 @@ export async function runContainerAgent(
             status: 'error',
             result: null,
             error: `Failed to parse container output: ${err instanceof Error ? err.message : String(err)}`,
-            streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
           });
         });
       }
@@ -1134,7 +1088,6 @@ export async function runContainerAgent(
           status: 'error',
           result: null,
           error: `Container spawn error: ${err.message}`,
-          streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
         });
       });
     });

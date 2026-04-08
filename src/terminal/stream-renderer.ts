@@ -17,8 +17,6 @@ export function mapStreamEventToRenderItems(
 ): TerminalStreamRenderItem[] {
   const streamConfig = getStreamConfig();
   const items: TerminalStreamRenderItem[] = [];
-  const isInternalNativeDecision = (description: string | null | undefined) =>
-    typeof description === 'string' && description.startsWith('Native ');
   const push = (
     text: string | null | undefined,
     tone: 'system' | 'error' | 'agent' = 'system',
@@ -92,12 +90,6 @@ export function mapStreamEventToRenderItems(
     }
     case 'decision': {
       const data = event.data as { description?: string; choice?: string };
-      if (
-        streamConfig.viewMode !== 'full' &&
-        isInternalNativeDecision(data?.description)
-      ) {
-        break;
-      }
       const parts = [
         typeof data?.description === 'string' ? data.description : null,
         typeof data?.choice === 'string' ? data.choice : null,

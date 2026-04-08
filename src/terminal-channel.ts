@@ -1,22 +1,15 @@
 import { mountTerminalInkApp, TerminalInkStore } from './terminal-ink.js';
 import { subscribeTerminalLogs, TerminalLogItem } from './terminal-log-sink.js';
 import { getTerminalOptions } from './terminal-options.js';
-import { AgentStreamEvent, Channel, NewMessage } from './types.js';
+import type { AgentStreamEvent, Channel, NewMessage } from './types.js';
 import { Interface, createInterface } from 'readline';
-import {
-  StreamEvent,
-  StreamProcessor,
-  ProcessOptions,
-} from './streaming/index.js';
+import type { StreamEvent } from './streaming/index.js';
 import { mapStreamEventToRenderItems } from './terminal/stream-renderer.js';
-import { resolveTerminalStreamOptions } from './terminal/stream-options.js';
 import {
   handleStreamCommand,
   isStreamCommand,
-  getStreamConfig,
   STREAM_COMMANDS,
 } from './terminal/stream-commands.js';
-import { STREAMING_CONFIG } from './config.js';
 
 export interface TerminalAgentSummary {
   jid: string;
@@ -474,8 +467,7 @@ export class TerminalChannel implements Channel {
   private inkApp: { unmount: () => void } | null = null;
   private plainReadline: Interface | null = null;
   private unsubscribeInkLogs: (() => void) | null = null;
-  private streamProcessor: StreamProcessor | null = null;
-  private streamEvents: StreamEvent[] = [];
+  private hasStreamEvents = false;
   private turnCounter = 0;
 
   constructor(private deps: TerminalChannelDeps) {}
@@ -483,14 +475,6 @@ export class TerminalChannel implements Channel {
   async connect(): Promise<void> {
     if (this.connected) return;
     this.connected = true;
-
-    if (STREAMING_CONFIG.ENABLED) {
-      const processorOptions: ProcessOptions = resolveTerminalStreamOptions(
-        'terminal',
-        `terminal-${Date.now()}`,
-      );
-      this.streamProcessor = new StreamProcessor(processorOptions);
-    }
 
     this.selectInitialAgent();
     if (this.isPlainTerminalMode()) {
@@ -524,11 +508,7 @@ export class TerminalChannel implements Channel {
       this.inkStore.dispose();
       this.inkStore = null;
     }
-    if (this.streamProcessor) {
-      this.streamProcessor.dispose();
-      this.streamProcessor = null;
-    }
-    this.streamEvents = [];
+    this.hasStreamEvents = false;
   }
 
   isConnected(): boolean {
@@ -626,7 +606,7 @@ export class TerminalChannel implements Channel {
   }
 
   async handleStreamEvent(jid: string, event: StreamEvent): Promise<void> {
-    this.streamEvents.push(event);
+    this.hasStreamEvents = true;
 
     const agent = this.agentByJid(jid);
     const label = agent ? agent.name : jid;
@@ -729,7 +709,7 @@ export class TerminalChannel implements Channel {
     if (item.type !== 'text') return;
     const current = this.currentAgent();
     if (!current) return;
-    if (item.text.includes('[stream]') && this.streamEvents.length > 0) return;
+    if (item.text.includes('[stream]') && this.hasStreamEvents) return;
     this.inkStore?.addMessage({
       id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       label: 'log',

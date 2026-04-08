@@ -76,11 +76,6 @@ vi.mock('./terminal/stream-commands.js', () => ({
       description: 'show or hide tool calls',
     },
     {
-      name: '/collapse-thinking',
-      usage: '/collapse-thinking',
-      description: 'toggle thinking collapsed state',
-    },
-    {
       name: '/stream-status',
       usage: '/stream-status',
       description: 'show streaming configuration',
@@ -93,7 +88,6 @@ vi.mock('./terminal/stream-commands.js', () => ({
       '/show-thinking',
       '/show-plan',
       '/show-tools',
-      '/collapse-thinking',
       '/stream-status',
     ].includes(cmd);
   }),
@@ -121,7 +115,6 @@ vi.mock('./terminal/stream-commands.js', () => ({
     showThinking: true,
     showPlan: true,
     showTools: true,
-    collapseThinking: false,
   })),
 }));
 
@@ -131,18 +124,7 @@ vi.mock('./config.js', () => ({
     SHOW_THINKING: true,
     SHOW_PLAN: true,
     SHOW_TOOLS: true,
-    THINKING_COLLAPSED: false,
     MAX_EVENTS: 100,
-  },
-}));
-
-vi.mock('./streaming/index.js', () => ({
-  StreamProcessor: class MockStreamProcessor {
-    constructor(_options: any) {}
-    processChunk(chunk: string) {
-      return [JSON.parse(chunk)];
-    }
-    dispose = vi.fn();
   },
 }));
 
@@ -467,6 +449,82 @@ describe('TerminalChannel', () => {
       ),
     ).toBe(true);
   });
+
+  it('suppresses legacy [stream] logs after native stream events and resets on reconnect', async () => {
+    const channel = new TerminalChannel(deps as any);
+    await channel.connect();
+
+    inkState.subscribedHandler?.({ type: 'text', text: '[stream] before native' });
+    expect(
+      storeState.messages.some((m) => m.text === '[stream] before native'),
+    ).toBe(true);
+
+    await channel.handleStreamEvent('local:one', {
+      type: 'content',
+      timestamp: 't-log',
+      data: { text: 'native chunk', replace: false },
+    } as any);
+
+    const suppressedCount = storeState.messages.filter(
+      (m) => m.text === '[stream] after native',
+    ).length;
+    inkState.subscribedHandler?.({ type: 'text', text: '[stream] after native' });
+    expect(
+      storeState.messages.filter((m) => m.text === '[stream] after native')
+        .length,
+    ).toBe(suppressedCount);
+
+    await channel.disconnect();
+    await channel.connect();
+
+    inkState.subscribedHandler?.({
+      type: 'text',
+      text: '[stream] after reconnect',
+    });
+    expect(
+      storeState.messages.some((m) => m.text === '[stream] after reconnect'),
+    ).toBe(true);
+  });
+
+  it('keeps live streamed agent content intact when status events arrive mid-turn', async () => {
+    const channel = new TerminalChannel(deps as any);
+    await channel.connect();
+
+    await channel.handleStreamEvent('local:one', {
+      type: 'content',
+      timestamp: 't1',
+      data: { text: '我目前可用的 skill', replace: false },
+    } as any);
+    await channel.sendAgentEvent('local:one', {
+      type: 'status',
+      text: 'Still working inside the container. Elapsed 20s.',
+    } as AgentStreamEvent);
+    await channel.handleStreamEvent('local:one', {
+      type: 'content',
+      timestamp: 't2',
+      data: { text: ' 还有这些工具', replace: false },
+    } as any);
+
+    expect(
+      storeState.messages.some(
+        (m) =>
+          m.label === 'status:one' &&
+          m.text === 'Still working inside the container. Elapsed 20s.',
+      ),
+    ).toBe(true);
+    expect(
+      storeState.messages.some(
+        (m) =>
+          m.label === 'agent:one' &&
+          m.text === '我目前可用的 skill 还有这些工具' &&
+          m.mergeKey === 'local:one:t0',
+      ),
+    ).toBe(false);
+    expect(storeState.completedMessages.some((m) => m.mergeKey === 'local:one:t0')).toBe(
+      false,
+    );
+  });
+
 
   it('uses a new merge key for the next turn after final agent output', async () => {
     const channel = new TerminalChannel(deps as any);

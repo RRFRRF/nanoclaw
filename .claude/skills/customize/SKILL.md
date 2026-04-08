@@ -3,7 +3,7 @@ name: customize
 description: Add new capabilities or modify NanoClaw behavior. Use when user wants to add channels (Telegram, Slack, email input), change triggers, add integrations, modify the router, or make any other customizations. This is an interactive skill that asks questions to understand what the user wants.
 ---
 
-# NanoClaw Customization
+# NanoHarness Customization
 
 This skill helps users add capabilities or modify behavior. Use AskUserQuestion to understand what they want before making changes.
 
@@ -26,7 +26,7 @@ This skill helps users add capabilities or modify behavior. Use AskUserQuestion 
 | `src/config.ts` | Assistant name, trigger pattern, directories |
 | `src/db.ts` | Database initialization and queries |
 | `src/whatsapp-auth.ts` | Standalone WhatsApp authentication script |
-| `groups/CLAUDE.md` | Global memory/persona |
+| `groups/global/{AGENTS.md|CLAUDE.md}` | Shared workspace memory/persona |
 
 ## Common Customization Patterns
 
@@ -52,7 +52,7 @@ Questions to ask:
 
 Implementation:
 1. Add MCP server config to the container settings (see `src/container-runner.ts` for how MCP servers are mounted)
-2. Document available tools in `groups/CLAUDE.md`
+2. Document available tools in `groups/global/{AGENTS.md|CLAUDE.md}` or the relevant group's memory file
 
 ### Changing Assistant Behavior
 
@@ -61,8 +61,8 @@ Questions to ask:
 - Apply to all groups or specific ones?
 
 Simple changes → edit `src/config.ts`
-Persona changes → edit `groups/CLAUDE.md`
-Per-group behavior → edit specific group's `CLAUDE.md`
+Persona changes → edit `groups/global/{AGENTS.md|CLAUDE.md}`
+Per-group behavior → edit the specific group's `AGENTS.md` (or `CLAUDE.md` during migration)
 
 ### Adding New Commands
 
@@ -72,7 +72,7 @@ Questions to ask:
 - Does it need new MCP tools?
 
 Implementation:
-1. Commands are handled by the agent naturally — add instructions to `groups/CLAUDE.md` or the group's `CLAUDE.md`
+1. Commands are handled by the agent naturally — add instructions to shared memory (`groups/global/{AGENTS.md|CLAUDE.md}`) or the group's memory file
 2. For trigger-level routing changes, modify `processGroupMessages()` in `src/index.ts`
 
 ### Changing Deployment

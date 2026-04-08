@@ -33,11 +33,6 @@ export const STREAM_COMMANDS: StreamCommandSpec[] = [
     description: 'Show or hide tool calls',
   },
   {
-    name: '/collapse-thinking',
-    usage: '/collapse-thinking',
-    description: 'Toggle thinking process collapsed state',
-  },
-  {
     name: '/stream-status',
     usage: '/stream-status',
     description: 'Show current streaming configuration',
@@ -50,7 +45,6 @@ interface StreamConfig {
   showThinking: boolean;
   showPlan: boolean;
   showTools: boolean;
-  collapseThinking: boolean;
 }
 
 // Global stream configuration
@@ -59,7 +53,6 @@ let streamConfig: StreamConfig = {
   showThinking: true,
   showPlan: true,
   showTools: true,
-  collapseThinking: false,
 };
 
 // Get current stream configuration
@@ -79,7 +72,6 @@ export function resetStreamConfig(): void {
     showThinking: true,
     showPlan: true,
     showTools: true,
-    collapseThinking: false,
   };
 }
 
@@ -173,17 +165,6 @@ export function handleStreamCommand(
       return true;
     }
 
-    case '/collapse-thinking': {
-      streamConfig.collapseThinking = !streamConfig.collapseThinking;
-      store.addMessage({
-        id: `system-${Date.now()}`,
-        label: 'system',
-        text: `Thinking collapsed: ${streamConfig.collapseThinking ? 'yes' : 'no'}`,
-        tone: 'system',
-      });
-      return true;
-    }
-
     case '/stream-status': {
       store.addMessage({
         id: `system-${Date.now()}`,
@@ -194,7 +175,6 @@ export function handleStreamCommand(
           `  Show thinking: ${streamConfig.showThinking}`,
           `  Show plan: ${streamConfig.showPlan}`,
           `  Show tools: ${streamConfig.showTools}`,
-          `  Collapse thinking: ${streamConfig.collapseThinking}`,
         ].join('\n'),
         tone: 'system',
       });

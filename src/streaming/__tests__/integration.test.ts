@@ -14,8 +14,6 @@ describe('Streaming Integration', () => {
   beforeEach(() => {
     parser = new StreamParser();
     processor = new StreamProcessor({
-      sessionId: 'test-session',
-      groupName: 'test-group',
       showThinking: true,
       showPlan: true,
       showTools: true,
@@ -141,7 +139,8 @@ ${STREAM_MARKERS.THINKING_END}`,
 
       processor.processChunk(mixedOutput);
       const events = processor.getEvents();
-      expect(events.length).toBeGreaterThanOrEqual(2);
+      expect(events).toHaveLength(1);
+      expect(events[0]?.type).toBe('thinking');
     });
   });
 
@@ -183,8 +182,6 @@ message":"Progress ${i}","percent":${i * 2}}}`,
   describe('memory management', () => {
     it('should not leak memory with many events', () => {
       const limitedProcessor = new StreamProcessor({
-        sessionId: 'test',
-        groupName: 'test',
         maxEvents: 10,
       });
 

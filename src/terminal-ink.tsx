@@ -408,7 +408,6 @@ export class TerminalInkStore {
       return;
     }
 
-    this.flushLiveMessage();
     this.snapshot = {
       ...this.snapshot,
       messages: [...this.snapshot.messages, { ...message, text }],

@@ -58,7 +58,7 @@ Implementation:
 - Add middleware loading at agent construction time.
 - Support both `summarizationMiddleware(...)` and `new SummarizationMiddleware(...)` export styles.
 - Keep compatibility metadata fields temporarily, but stop using them to control flow.
-- Remove host-side fallback rerun logic that depended on `nativeCompact.fallbackToRuleCompact`.
+- Remove host-side fallback rerun logic that depended on legacy compact metadata.
 - Simplify prompt-formatting logic to a single non-fallback path.
 
 Success criteria:

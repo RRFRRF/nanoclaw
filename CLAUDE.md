@@ -4,7 +4,7 @@ Personal agent harness for long-running tasks. See [README.md](README.md) for ph
 
 ## Quick Context
 
-Single Node.js process with skill-based channel system. Channels (WhatsApp, Telegram, Slack, Discord, Gmail) are skills that self-register at startup. Messages route to a Deep Agents runtime running in containers (Linux VMs). Each group has isolated filesystem and memory.
+Single Node.js process with skill-based channel system. Channels (WhatsApp, Telegram, Slack, Discord, Gmail) are skills that self-register at startup. Messages route to a Deep Agents runtime running in containers (Linux VMs). Each group has isolated filesystem and workspace memory.
 
 ## Key Files
 
@@ -20,7 +20,7 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `src/db.ts` | SQLite operations |
 | `src/streaming/` | Real-time streaming output system |
 | `src/compact/` | Context compression for long conversations |
-| `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
+| `groups/{name}/{AGENTS.md|CLAUDE.md}` | Per-group workspace memory |
 | `container/skills/` | Skills loaded inside agent containers (browser, status, formatting) |
 
 ## Streaming Output
@@ -41,7 +41,6 @@ Configure via environment variables (see `.env.example`):
 Or use Terminal commands:
 - `/view-mode <smart|full|minimal>` - Switch display mode
 - `/show-thinking <on|off>` - Toggle thinking display
-- `/collapse-thinking` - Fold thinking content
 
 ## Context Compression
 

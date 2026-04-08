@@ -52,7 +52,6 @@ async function loadRunner(provider: Provider, authMode: AuthMode) {
     NANOCLAW_DISABLE_NATIVE_STREAM_FALLBACK: undefined,
     NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS: 'true',
     NANOCLAW_ENABLE_SUMMARIZATION: 'true',
-    NANOCLAW_FORCE_LANGCHAIN_SUMMARIZATION_MIDDLEWARE: undefined,
     NANOCLAW_INTERRUPT_ON_JSON: '{"write_file":true}',
     NANOCLAW_PERSIST_RUNTIME_CONTEXT_CONTENT: undefined,
     NANOCLAW_RESEARCHER_MODEL: 'researcher-model',
@@ -63,15 +62,12 @@ async function loadRunner(provider: Provider, authMode: AuthMode) {
     NANOCLAW_SUBAGENT_RESEARCHER_SKILLS: '/skills/researcher',
     NANOCLAW_SUBAGENT_REVIEWER_MODEL: 'reviewer-subagent-model',
     NANOCLAW_SUBAGENT_REVIEWER_SKILLS: '/skills/reviewer',
-    NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS: 'true',
     NANOCLAW_STREAM_CONTENT_FROM_NATIVE: 'true',
     NANOCLAW_USE_NATIVE_STREAMING: 'true',
-    NANOCLAW_USE_NATIVE_MEMORY: 'true',
     OPENAI_MODEL: 'gpt-test-model',
     STREAMING_CONFIG: {
       ENABLED: true,
       SHOW_THINKING: true,
-      THINKING_COLLAPSED: false,
       SHOW_PLAN: true,
       SHOW_TOOLS: true,
       BUFFER_SIZE: 1000,
@@ -190,7 +186,6 @@ describe('container-runner provider env injection', () => {
     expect(args).toContain('NANOCLAW_STREAM_CONTENT_FROM_NATIVE=true');
     expect(args).toContain('NANOCLAW_DEBUG_NATIVE_STREAM=true');
     expect(args).toContain('NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS=true');
-    expect(args).toContain('NANOCLAW_USE_NATIVE_MEMORY=true');
     expect(args).toContain('NANOCLAW_INTERRUPT_ON_JSON={"write_file":true}');
     expect(args).toContain(
       'NANOCLAW_SUBAGENT_RESEARCHER_SKILLS=/skills/researcher',
@@ -199,7 +194,6 @@ describe('container-runner provider env injection', () => {
     expect(args).toContain(
       'NANOCLAW_SUBAGENT_REVIEWER_SKILLS=/skills/reviewer',
     );
-    expect(args).toContain('NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS=true');
     expect(args).toContain(
       'NANOCLAW_SUBAGENT_RESEARCHER_MODEL=researcher-subagent-model',
     );
@@ -249,7 +243,6 @@ describe('container-runner provider env injection', () => {
     expect(args).toContain('NANOCLAW_STREAM_CONTENT_FROM_NATIVE=true');
     expect(args).toContain('NANOCLAW_DEBUG_NATIVE_STREAM=true');
     expect(args).toContain('NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS=true');
-    expect(args).toContain('NANOCLAW_USE_NATIVE_MEMORY=true');
     expect(args).toContain('NANOCLAW_INTERRUPT_ON_JSON={"write_file":true}');
     expect(args).toContain(
       'NANOCLAW_SUBAGENT_RESEARCHER_SKILLS=/skills/researcher',
@@ -258,7 +251,6 @@ describe('container-runner provider env injection', () => {
     expect(args).toContain(
       'NANOCLAW_SUBAGENT_REVIEWER_SKILLS=/skills/reviewer',
     );
-    expect(args).toContain('NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS=true');
     expect(args).toContain(
       'NANOCLAW_SUBAGENT_RESEARCHER_MODEL=researcher-subagent-model',
     );

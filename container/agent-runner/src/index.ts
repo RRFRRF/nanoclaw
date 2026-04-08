@@ -48,23 +48,6 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   enableStreaming?: boolean;
-  nativeCompact?: NativeCompactRequest;
-}
-
-interface NativeCompactRequest {
-  enabled?: boolean;
-  sessionId?: string;
-  metadata?: {
-    compactMode?: 'rule' | 'native_llm' | 'fallback_rule';
-    requestedNativeCompact?: boolean;
-  };
-}
-
-interface NativeCompactOutcome {
-  attempted: boolean;
-  succeeded: boolean;
-  fallbackToRuleCompact: boolean;
-  reason?: string;
 }
 
 interface ContainerOutput {
@@ -79,7 +62,6 @@ interface ContainerOutput {
     replace?: boolean;
   };
   error?: string;
-  nativeCompact?: NativeCompactOutcome;
 }
 
 interface QueryRunResult {
@@ -90,7 +72,6 @@ interface QueryRunResult {
   lastResultText: string | null;
   lastResultSubtype?: string;
   sawStatusEvent: boolean;
-  nativeCompact?: NativeCompactOutcome;
 }
 
 interface NativeStreamConsumeResult {
@@ -1225,19 +1206,8 @@ function mapUpdatesChunkToBridgeEvents(
   if (!isRecord(data)) return [];
 
   const events: NativeStreamBridgeEvent[] = [];
-  const sourceLabel = getNamespaceToolSegment(namespace) || 'main';
-  const isMainNamespace = isNativeMainAssistantNamespace(namespace);
 
-  for (const [nodeName, nodeData] of Object.entries(data)) {
-    events.push({
-      type: 'decision',
-      description:
-        namespace.length === 0 || isMainNamespace
-          ? 'Native stream update'
-          : `Native subagent update (${sourceLabel})`,
-      choice: nodeName,
-    });
-
+  for (const [, nodeData] of Object.entries(data)) {
     const nodeMessages = extractMessages(nodeData);
     for (const message of nodeMessages) {
       if (!isRecord(message)) continue;
@@ -1258,7 +1228,6 @@ function mapUpdatesChunkToBridgeEvents(
             toolCall.arguments ??
             toolCall.input ??
             toolCall.payload,
-          message: `Node ${nodeName} requested ${name}`,
         });
       }
 
@@ -1285,28 +1254,8 @@ function mapMessagesChunkToBridgeEvents(
 ): NativeStreamBridgeEvent[] {
   if (!Array.isArray(data) || data.length === 0) return [];
 
-  const [message, metadata] = data;
+  const [message] = data;
   const events: NativeStreamBridgeEvent[] = [];
-  const isMainNamespace = isNativeMainAssistantNamespace(namespace);
-
-  if (isRecord(metadata)) {
-    const nodeName = getStringField(
-      metadata,
-      'langgraph_node',
-      'node',
-      'nodeName',
-    );
-    if (nodeName) {
-      events.push({
-        type: 'decision',
-        description:
-          namespace.length === 0 || isMainNamespace
-            ? 'Native message stream'
-            : `Native subagent message (${getNamespaceToolSegment(namespace) || 'main'})`,
-        choice: nodeName,
-      });
-    }
-  }
 
   if (!isRecord(message)) return events;
 
@@ -1456,8 +1405,6 @@ export async function consumeNativeAgentStream(
   const decisionCache = new Set<string>();
   const activeToolIds = new Map<string, string>();
   let chunkCount = 0;
-
-  streamingOutput.decision('Native stream bridge', 'agent.stream enabled');
 
   for await (const chunk of stream) {
     chunkCount += 1;
@@ -1847,17 +1794,6 @@ function getPrimaryModelName(provider: ModelProvider): string {
   );
 }
 
-function getSummarizationModelName(
-  provider: ModelProvider,
-  primaryModelName: string,
-): string {
-  return (
-    process.env.NANOCLAW_SUMMARIZATION_MODEL ||
-    process.env.DEEPAGENTS_SUMMARIZATION_MODEL ||
-    primaryModelName
-  );
-}
-
 function createChatModel(provider: ModelProvider, modelName: string) {
   if (provider === 'openai') {
     return new ChatOpenAI({
@@ -1874,80 +1810,8 @@ function createChatModel(provider: ModelProvider, modelName: string) {
   });
 }
 
-async function loadDeepAgentsMiddleware(
-  provider: ModelProvider,
-  primaryModelName: string,
-): Promise<any[]> {
-  if (process.env.NANOCLAW_ENABLE_SUMMARIZATION === 'false') {
-    return [];
-  }
-
-  // DeepAgents already includes built-in summarization/offloading in its harness.
-  // Only inject LangChain's explicit SummarizationMiddleware when operators force
-  // it for compatibility experiments, otherwise duplicate middleware registration
-  // can crash startup.
-  if (process.env.NANOCLAW_FORCE_LANGCHAIN_SUMMARIZATION_MIDDLEWARE !== 'true') {
-    return [];
-  }
-
-  try {
-    const langchainModule = (await import('langchain')) as AnyRecord;
-    const summarizationOptions = {
-      model: createChatModel(
-        provider,
-        getSummarizationModelName(provider, primaryModelName),
-      ),
-      trigger: [
-        {
-          tokens: parsePositiveIntEnv(
-            'NANOCLAW_SUMMARIZATION_TRIGGER_TOKENS',
-            24000,
-          ),
-        },
-        {
-          messages: parsePositiveIntEnv(
-            'NANOCLAW_SUMMARIZATION_TRIGGER_MESSAGES',
-            40,
-          ),
-        },
-      ],
-      keep: {
-        messages: parsePositiveIntEnv(
-          'NANOCLAW_SUMMARIZATION_KEEP_MESSAGES',
-          12,
-        ),
-      },
-      trimTokensToSummarize: parsePositiveIntEnv(
-        'NANOCLAW_SUMMARIZATION_TRIM_TOKENS',
-        12000,
-      ),
-    };
-
-    const summarizationMiddlewareFactory =
-      langchainModule.summarizationMiddleware;
-    if (typeof summarizationMiddlewareFactory === 'function') {
-      return [summarizationMiddlewareFactory(summarizationOptions)];
-    }
-
-    const SummarizationMiddleware = langchainModule.SummarizationMiddleware;
-    if (typeof SummarizationMiddleware === 'function') {
-      return [new (SummarizationMiddleware as new (options: unknown) => unknown)(
-        summarizationOptions,
-      )];
-    }
-
-    log(
-      'LangChain summarization middleware export not found. Continuing with DeepAgents built-in summarization only.',
-    );
-    return [];
-  } catch (err) {
-    log(
-      `Failed to load optional LangChain summarization middleware: ${
-        err instanceof Error ? err.message : String(err)
-      }. Continuing with DeepAgents built-in summarization only.`,
-    );
-    return [];
-  }
+function loadDeepAgentsMiddleware(): Promise<any[]> {
+  return Promise.resolve([]);
 }
 
 function getSubagentModelName(
@@ -1974,10 +1838,6 @@ function shouldEnablePredefinedSubagents(): boolean {
   return process.env.NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS !== 'false';
 }
 
-function shouldUseNativeMemory(): boolean {
-  return process.env.NANOCLAW_USE_NATIVE_MEMORY === 'true';
-}
-
 function parseEnvPathList(value: string | undefined): string[] {
   if (!value?.trim()) return [];
 
@@ -1989,23 +1849,14 @@ function parseEnvPathList(value: string | undefined): string[] {
 
 function getPredefinedSubagentSkills(
   role: 'researcher' | 'coder' | 'reviewer',
-  mainSkills: string[],
 ): string[] {
-  const shareMainSkills =
-    process.env.NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS === 'true';
   const roleEnvName = {
     researcher: 'NANOCLAW_SUBAGENT_RESEARCHER_SKILLS',
     coder: 'NANOCLAW_SUBAGENT_CODER_SKILLS',
     reviewer: 'NANOCLAW_SUBAGENT_REVIEWER_SKILLS',
   }[role];
-  const roleSpecificSkills = parseEnvPathList(process.env[roleEnvName]);
 
-  const resolved = [
-    ...(shareMainSkills ? mainSkills : []),
-    ...roleSpecificSkills,
-  ];
-
-  return [...new Set(resolved)];
+  return [...new Set(parseEnvPathList(process.env[roleEnvName]))];
 }
 
 export function buildDelegationPolicyLines(): string[] {
@@ -2017,13 +1868,10 @@ export function buildDelegationPolicyLines(): string[] {
   }
 
   return [
-    'Available predefined subagents: researcher for investigation, coder for implementation, reviewer for findings-first review.',
-    'Use task delegation when specialized work or context isolation is helpful, but avoid unnecessary recursive delegation.',
-    'Delegate to researcher for codebase investigation or option comparison, coder for concrete implementation, and reviewer for regression-focused critique.',
-    'When delegating, prefer the exact task names researcher, coder, or reviewer before falling back to general-purpose delegation.',
-    'Prefer one focused subagent at a time unless the task clearly benefits from separation of concerns.',
-    'If the task is already small and clear in the current context, do it directly instead of delegating.',
-    'Do not re-delegate the same question repeatedly without incorporating the previous subagent result.',
+    'Available predefined subagents: researcher, coder, reviewer.',
+    'Delegate only when the work clearly benefits from isolation or a specialized pass.',
+    'Prefer researcher for investigation, coder for implementation, and reviewer for findings-first critique.',
+    'Use the predefined names directly when possible.',
   ];
 }
 
@@ -2072,13 +1920,10 @@ export function buildPredefinedSubagents(options: {
         'Investigates code, traces behavior, compares options, and returns concise findings before implementation.',
       systemPrompt: [
         'You are the researcher subagent inside NanoHarness.',
-        'Focus on understanding the codebase, tracing behavior, comparing approaches, and collecting evidence.',
-        'Prefer reading, searching, and targeted command output over editing files.',
-        'Use the exact task identity researcher when delegated by the parent agent.',
-        'Return concise findings, risks, and the most relevant next step for the parent agent.',
+        'Investigate, trace behavior, compare options, and return concise findings for the parent agent.',
       ].join(' '),
       tools: filterSubagentTools(options.tools, 'researcher'),
-      skills: getPredefinedSubagentSkills('researcher', options.skills),
+      skills: getPredefinedSubagentSkills('researcher'),
       model: createChatModel(
         options.provider,
         getSubagentModelName('researcher', options.primaryModelName),
@@ -2090,13 +1935,10 @@ export function buildPredefinedSubagents(options: {
         'Implements concrete code changes, keeps edits focused, and runs targeted verification when useful.',
       systemPrompt: [
         'You are the coder subagent inside NanoHarness.',
-        'Focus on making the smallest correct code changes that solve the assigned task.',
-        'Use files and shell tools pragmatically, keep scope tight, and run targeted verification when it materially reduces risk.',
-        'Use the exact task identity coder when delegated by the parent agent.',
-        'Return changed files, checks run, and any remaining risks to the parent agent.',
+        'Make the smallest correct code changes, verify the important path, and report changed files plus remaining risks.',
       ].join(' '),
       tools: filterSubagentTools(options.tools, 'coder'),
-      skills: getPredefinedSubagentSkills('coder', options.skills),
+      skills: getPredefinedSubagentSkills('coder'),
       model: createChatModel(
         options.provider,
         getSubagentModelName('coder', options.primaryModelName),
@@ -2108,13 +1950,10 @@ export function buildPredefinedSubagents(options: {
         'Reviews behavior, identifies regressions and missing tests, and returns findings-first feedback without implementation churn.',
       systemPrompt: [
         'You are the reviewer subagent inside NanoHarness.',
-        'Inspect proposed or completed changes for bugs, regressions, unsafe assumptions, and missing tests.',
-        'Do not make broad implementation changes unless the parent agent explicitly asks for them.',
-        'Use the exact task identity reviewer when delegated by the parent agent.',
-        'Return findings first, ordered by severity, then note residual risks or test gaps.',
+        'Review for bugs, regressions, unsafe assumptions, and missing tests, then return findings first.',
       ].join(' '),
       tools: filterSubagentTools(options.tools, 'reviewer'),
-      skills: getPredefinedSubagentSkills('reviewer', options.skills),
+      skills: getPredefinedSubagentSkills('reviewer'),
       model: createChatModel(
         options.provider,
         getSubagentModelName('reviewer', options.primaryModelName),
@@ -2278,7 +2117,6 @@ export function buildRuntimePromptBundle(
 
   sections.push(runtimeInstructions.join('\n'));
 
-  const useNativeMemory = shouldUseNativeMemory();
   const groupMemoryFile = getResolvedWorkspaceMemoryFile(containerInput, 'group');
   const globalMemoryFile = getResolvedWorkspaceMemoryFile(
     containerInput,
@@ -2298,22 +2136,6 @@ export function buildRuntimePromptBundle(
   const projectClaude = projectMemoryFile
     ? readOptionalFile(projectMemoryFile.absolutePath)
     : null;
-
-  if (!useNativeMemory) {
-    if (groupClaude) {
-      sections.push(`<group_memory>\n${groupClaude.trim()}\n</group_memory>`);
-    }
-
-    if (globalClaude) {
-      sections.push(`<global_memory>\n${globalClaude.trim()}\n</global_memory>`);
-    }
-
-    if (projectClaude) {
-      sections.push(
-        `<project_memory>\n${projectClaude.trim()}\n</project_memory>`,
-      );
-    }
-  }
 
   const runtimePrompt = sections.join('\n\n');
   const runtimeContext = buildDeepAgentRuntimeContext(containerInput, options);
@@ -3388,7 +3210,7 @@ async function buildAgent(
   const provider = getModelProvider();
   const primaryModelName = getPrimaryModelName(provider);
   const model = createChatModel(provider, primaryModelName);
-  const middleware = await loadDeepAgentsMiddleware(provider, primaryModelName);
+  const middleware = await loadDeepAgentsMiddleware();
   const subagents = buildPredefinedSubagents({
     provider,
     primaryModelName,
@@ -3396,9 +3218,7 @@ async function buildAgent(
     tools,
   });
   const interruptOn = parseInterruptOnConfig();
-  const memory = shouldUseNativeMemory()
-    ? buildDeepAgentsMemoryPaths(containerInput)
-    : undefined;
+  const memory = buildDeepAgentsMemoryPaths(containerInput);
   const runtimePromptBundle = buildRuntimePromptBundle('', containerInput);
 
   const agent = (await createDeepAgent({

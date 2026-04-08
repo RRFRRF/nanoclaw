@@ -359,35 +359,6 @@ describe('index orchestration integration', () => {
     });
   });
 
-  it('does not retry a host fallback run when legacy nativeCompact metadata is present', async () => {
-    state.db.getMessagesSince.mockReturnValue([
-      {
-        id: 'm1',
-        chat_jid: 'local:1',
-        sender: 'user',
-        sender_name: 'User',
-        content: 'please continue',
-        timestamp: '2026-04-02T01:00:00.000Z',
-        is_from_me: false,
-      },
-    ] as any);
-    state.containerRunner.runContainerAgent.mockResolvedValue({
-      status: 'error',
-      result: null,
-      error: 'legacy native compact marker',
-      nativeCompact: {
-        attempted: true,
-        succeeded: false,
-        fallbackToRuleCompact: true,
-        reason: 'legacy signal',
-      },
-    });
-
-    const processed = await __testInternals.processGroupMessages('local:1');
-
-    expect(processed).toBe(false);
-    expect(state.containerRunner.runContainerAgent).toHaveBeenCalledTimes(1);
-  });
 
   it('falls back to a free credential proxy port when the preferred port is busy', async () => {
     const close = vi.fn();

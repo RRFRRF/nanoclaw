@@ -9,26 +9,20 @@ import {
   StreamEventType,
   PlanStep,
   StepStatus,
-  isThinkingEvent,
   isPlanEvent,
   isPlanStepEvent,
   isToolStartEvent,
   isToolProgressEvent,
   isToolCompleteEvent,
-  isDecisionEvent,
-  isContentEvent,
   isCompleteEvent,
   isErrorEvent,
 } from './types.js';
 
 // Processor options
 export interface ProcessOptions {
-  sessionId: string;
-  groupName: string;
   showThinking?: boolean;
   showPlan?: boolean;
   showTools?: boolean;
-  collapseThinking?: boolean;
   maxEvents?: number;
   emitResidualBufferErrors?: boolean;
 }
@@ -80,7 +74,6 @@ export class StreamProcessor {
       showThinking: true,
       showPlan: true,
       showTools: true,
-      collapseThinking: false,
       maxEvents: 10000,
       ...options,
     };

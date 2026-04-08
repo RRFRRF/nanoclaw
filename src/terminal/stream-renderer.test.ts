@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { mapStreamEventToRenderItems } from './stream-renderer.js';
-import { resetStreamConfig, setStreamConfig } from './stream-commands.js';
+import { resetStreamConfig } from './stream-commands.js';
 
 describe('mapStreamEventToRenderItems', () => {
   beforeEach(() => {
@@ -47,27 +47,12 @@ describe('mapStreamEventToRenderItems', () => {
     });
   });
 
-  it('hides internal native decision events outside full mode', () => {
+  it('renders decision events without native-specific filtering', () => {
     const items = mapStreamEventToRenderItems('local:test', 'agent:test', {
       type: 'decision',
       timestamp: 't1',
       data: {
-        description: 'Native message stream',
-        choice: 'model_request',
-      },
-    } as any);
-
-    expect(items).toEqual([]);
-  });
-
-  it('shows internal native decision events in full mode', () => {
-    setStreamConfig({ viewMode: 'full' });
-
-    const items = mapStreamEventToRenderItems('local:test', 'agent:test', {
-      type: 'decision',
-      timestamp: 't1',
-      data: {
-        description: 'Native message stream',
+        description: 'Message stream',
         choice: 'model_request',
       },
     } as any);
@@ -76,9 +61,10 @@ describe('mapStreamEventToRenderItems', () => {
       {
         kind: 'message',
         label: 'agent:test',
-        text: 'Native message stream: model_request',
+        text: 'Message stream: model_request',
         tone: 'system',
       },
     ]);
   });
 });
+
