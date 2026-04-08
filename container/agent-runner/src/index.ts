@@ -1429,7 +1429,7 @@ export function mapNativeStreamChunkToBridgeEvents(
   }
 }
 
-async function consumeNativeAgentStream(
+export async function consumeNativeAgentStream(
   agent: RuntimeAgent,
   invocationInput: unknown,
   baseConfig: AnyRecord,
@@ -1467,7 +1467,6 @@ async function consumeNativeAgentStream(
 
   let lastChunk: unknown = null;
   let interruptChunk: unknown = null;
-  let lastEmittedText = '';
   let bufferedMainAssistantText = '';
   const decisionCache = new Set<string>();
   const activeToolIds = new Map<string, string>();
@@ -1534,6 +1533,8 @@ async function consumeNativeAgentStream(
         chunkIndex: chunkCount,
         events: bridgeEvents,
       });
+
+      let streamedContentCount = 0;
 
       for (const event of bridgeEvents) {
         if (event.type === 'tool_start') {
@@ -1605,13 +1606,13 @@ async function consumeNativeAgentStream(
         if (
           event.type === 'content' &&
           shouldEmitNativeStreamContent() &&
-          event.text &&
-          event.text !== lastEmittedText
+          event.text
         ) {
+          streamedContentCount += 1;
           streamingOutput.content(event.text, {
-            replace: event.replace === true,
+            replace:
+              event.replace === true && streamedContentCount === 1,
           });
-          lastEmittedText = event.text;
         }
       }
     } catch (err) {
@@ -1657,7 +1658,7 @@ async function consumeNativeAgentStream(
   }
 
   return {
-    result: lastChunk ?? lastEmittedText,
+    result: lastChunk ?? '',
     emittedMainAssistantContent: false,
     bufferedMainAssistantText,
   };

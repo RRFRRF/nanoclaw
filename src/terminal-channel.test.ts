@@ -468,6 +468,36 @@ describe('TerminalChannel', () => {
     ).toBe(true);
   });
 
+  it('uses a new merge key for the next turn after final agent output', async () => {
+    const channel = new TerminalChannel(deps as any);
+    await channel.connect();
+
+    await channel.handleStreamEvent('local:one', {
+      type: 'content',
+      timestamp: 't1',
+      data: { text: 'part 1', replace: false },
+    } as any);
+    await channel.sendMessage('local:one', 'final answer');
+    await channel.sendAgentEvent('local:one', {
+      type: 'assistant',
+      text: 'next turn part',
+      replace: false,
+    } as AgentStreamEvent);
+
+    expect(storeState.completedMessages.at(-1)).toMatchObject({
+      mergeKey: 'local:one:t0',
+      text: 'final answer',
+    });
+    expect(
+      storeState.messages.some(
+        (m) =>
+          m.label === 'agent:one' &&
+          m.text === 'next turn part' &&
+          m.mergeKey === 'local:one:t1',
+      ),
+    ).toBe(true);
+  });
+
   it('submits normal input and command input through mounted handlers', async () => {
     const channel = new TerminalChannel(deps as any);
     await channel.connect();

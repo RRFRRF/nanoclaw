@@ -476,6 +476,7 @@ export class TerminalChannel implements Channel {
   private unsubscribeInkLogs: (() => void) | null = null;
   private streamProcessor: StreamProcessor | null = null;
   private streamEvents: StreamEvent[] = [];
+  private turnCounter = 0;
 
   constructor(private deps: TerminalChannelDeps) {}
 
@@ -594,8 +595,9 @@ export class TerminalChannel implements Channel {
       label: `agent:${label}`,
       text,
       tone: 'agent',
-      mergeKey: jid,
+      mergeKey: `${jid}:t${this.turnCounter}`,
     });
+    this.turnCounter += 1;
     this.refreshInkContext();
   }
 
@@ -610,7 +612,7 @@ export class TerminalChannel implements Channel {
         label: `agent:${label}`,
         text: event.text,
         tone: 'agent',
-        mergeKey: jid,
+        mergeKey: `${jid}:t${this.turnCounter}`,
         mergeMode: event.replace ? 'replace' : 'append',
       });
       this.refreshInkContext();
@@ -632,7 +634,8 @@ export class TerminalChannel implements Channel {
     const agent = this.agentByJid(jid);
     const label = agent ? agent.name : jid;
     this.setTransientStatus(jid, 'running', 15000);
-    const items = mapStreamEventToRenderItems(jid, `agent:${label}`, event);
+    const mergeJid = `${jid}:t${this.turnCounter}`;
+    const items = mapStreamEventToRenderItems(mergeJid, `agent:${label}`, event);
 
     for (const item of items) {
       this.inkStore?.addMessage({

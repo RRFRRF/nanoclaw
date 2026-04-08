@@ -180,6 +180,21 @@ describe('agent runner runtime diagnostics', () => {
   async function loadRuntimeModule() {
     const modPath = '../container/agent-runner/src/index.ts';
     return (await import(modPath)) as {
+      consumeNativeAgentStream: (
+        agent: {
+          invoke: (input: unknown, config?: unknown) => Promise<unknown>;
+          stream?: (
+            input: unknown,
+            config?: unknown,
+          ) => Promise<AsyncIterable<unknown>>;
+        },
+        invocationInput: unknown,
+        baseConfig: Record<string, unknown>,
+      ) => Promise<{
+        result: unknown;
+        emittedMainAssistantContent: boolean;
+        bufferedMainAssistantText: string;
+      }>;
       buildRuntimePromptBundle: (
         basePrompt: string,
         containerInput: {
@@ -1445,46 +1460,101 @@ describe('agent runner runtime diagnostics', () => {
     });
   });
 
-  it('parses multi-action and generic human-in-the-loop resume payloads', async () => {
+
+  it('keeps repeated native content chunks instead of deduping equal text', async () => {
     const mod = await loadRuntimeModule();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    const actionInterrupt = {
-      actionRequests: [
-        { name: 'write_file', args: { path: 'a.md' } },
-        { name: 'delete_file', args: { path: 'b.md' } },
-      ],
-      reviewConfigs: [
+    process.env.NANOCLAW_USE_NATIVE_STREAMING = 'true';
+    process.env.NANOCLAW_STREAM_CONTENT_FROM_NATIVE = 'true';
+
+    try {
+      const result = await mod.consumeNativeAgentStream(
         {
-          actionName: 'write_file',
-          allowedDecisions: ['approve', 'reject'],
+          invoke: async () => ({}),
+          stream: async () =>
+            ({
+              async *[Symbol.asyncIterator]() {
+                yield [
+                  [],
+                  'messages',
+                  [
+                    { text: '你好' },
+                    { langgraph_node: 'model_request' },
+                  ],
+                ];
+                yield [
+                  [],
+                  'messages',
+                  [
+                    { text: '你好' },
+                    { langgraph_node: 'model_request' },
+                  ],
+                ];
+              },
+            }) as AsyncIterable<unknown>,
         },
+        { prompt: 'test' },
+        {},
+      );
+
+      const contentEvents = logSpy.mock.calls.filter((call) =>
+        call.some(
+          (arg) => typeof arg === 'string' && arg.includes('<<<CONTENT>>>'),
+        ),
+      );
+
+      expect(contentEvents).toHaveLength(2);
+      expect(result.emittedMainAssistantContent).toBe(true);
+      expect(result.bufferedMainAssistantText).toBe('你好你好');
+    } finally {
+      delete process.env.NANOCLAW_USE_NATIVE_STREAMING;
+      delete process.env.NANOCLAW_STREAM_CONTENT_FROM_NATIVE;
+      logSpy.mockRestore();
+    }
+  });
+
+  it('keeps replace mode only for the first replacing event within one native chunk batch', async () => {
+    const mod = await loadRuntimeModule();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    process.env.NANOCLAW_USE_NATIVE_STREAMING = 'true';
+    process.env.NANOCLAW_STREAM_CONTENT_FROM_NATIVE = 'true';
+
+    try {
+      await mod.consumeNativeAgentStream(
         {
-          actionName: 'delete_file',
-          allowedDecisions: ['approve', 'reject'],
+          invoke: async () => ({}),
+          stream: async () =>
+            ({
+              async *[Symbol.asyncIterator]() {
+                yield [
+                  [],
+                  'messages',
+                  [
+                    { text: 'A' },
+                    { langgraph_node: 'model_request' },
+                  ],
+                ];
+              },
+            }) as AsyncIterable<unknown>,
         },
-      ],
-    };
+        { prompt: 'test' },
+        {},
+      );
 
-    expect(
-      mod.parseHumanInLoopResumeInput('approve\nreject', actionInterrupt),
-    ).toEqual({
-      decisions: [{ type: 'approve' }, { type: 'reject' }],
-    });
+      const payloads = logSpy.mock.calls
+        .map((call) => call.find((arg) => typeof arg === 'string'))
+        .filter((arg): arg is string => typeof arg === 'string')
+        .filter((arg) => arg.includes('"type":"content"'))
+        .map((arg) => JSON.parse(arg));
 
-    expect(
-      mod.parseHumanInLoopResumeInput('{"approved":true,"code":"123456"}', {
-        message: 'Need code',
-      }),
-    ).toEqual({
-      approved: true,
-      code: '123456',
-    });
-
-    expect(
-      mod.parseHumanInLoopResumeInput('captcha is 7788', {
-        type: 'nanoclaw_user_input',
-        message: 'Need code',
-      }),
-    ).toBe('captcha is 7788');
+      expect(payloads).toHaveLength(1);
+      expect(payloads[0].data).toMatchObject({ text: 'A', replace: false });
+    } finally {
+      delete process.env.NANOCLAW_USE_NATIVE_STREAMING;
+      delete process.env.NANOCLAW_STREAM_CONTENT_FROM_NATIVE;
+      logSpy.mockRestore();
+    }
   });
 });

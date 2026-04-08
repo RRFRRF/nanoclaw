@@ -97,4 +97,28 @@ describe('ipc mcp stdio tools', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Invalid cron');
   });
+
+  it('serializes isMain as a boolean in IPC payloads, not a string', async () => {
+    const updateTask = state.tools.get('update_task');
+    await updateTask!({
+      task_id: 'task-1',
+      prompt: 'updated',
+    });
+
+    // writeFileSync receives JSON string; parse it and verify isMain type
+    const writeCall = state.writeFileSync.mock.calls.find(
+      (call: any[]) => {
+        try {
+          const parsed = JSON.parse(call[1] as string);
+          return parsed.type === 'update_task';
+        } catch {
+          return false;
+        }
+      },
+    );
+    expect(writeCall).toBeDefined();
+    const payload = JSON.parse(writeCall![1] as string);
+    expect(typeof payload.isMain).toBe('boolean');
+    expect(payload.isMain).toBe(false); // env NANOCLAW_IS_MAIN=0
+  });
 });

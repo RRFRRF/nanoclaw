@@ -326,4 +326,32 @@ ${STREAM_MARKERS.THINKING_END}`;
       }
     });
   });
+
+  describe('marker ordering', () => {
+    it('parses an earlier single-line marker before a later incomplete block marker', () => {
+      // Tool_start appears before an incomplete thinking block —
+      // the parser must emit the tool_start first, not skip it because
+      // it tried the thinking block.
+      const chunk = `${STREAM_MARKERS.TOOL_START}{"type":"tool_start","timestamp":"t1","data":{"toolId":"t1","name":"grep","input":{}}}
+${STREAM_MARKERS.THINKING_START}
+{"type":"thinking","timestamp":"t2","data":{"content":"partial`;
+
+      const events = parser.parseChunk(chunk);
+      // tool_start should be emitted; thinking is incomplete and buffered
+      expect(events.length).toBeGreaterThanOrEqual(1);
+      expect(events[0].type).toBe('tool_start');
+    });
+
+    it('parses markers in positional order when multiple complete markers exist', () => {
+      const chunk = `${STREAM_MARKERS.DECISION}{"type":"decision","timestamp":"t1","data":{"description":"D","choice":"C"}}
+${STREAM_MARKERS.TOOL_START}{"type":"tool_start","timestamp":"t2","data":{"toolId":"t1","name":"read","input":{}}}
+${STREAM_MARKERS.COMPLETE}{"type":"complete","timestamp":"t3","data":{}}`;
+
+      const events = parser.parseChunk(chunk);
+      expect(events.length).toBe(3);
+      expect(events[0].type).toBe('decision');
+      expect(events[1].type).toBe('tool_start');
+      expect(events[2].type).toBe('complete');
+    });
+  });
 });

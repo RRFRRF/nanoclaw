@@ -76,64 +76,126 @@ export class StreamParser {
    * Try to parse the next event from buffer
    */
   private tryParseNextEvent(): StreamEvent | null {
-    // Check for stateful markers first
-    if (this.parsingState === 'idle') {
-      // Check for start markers
-      if (this.buffer.includes(STREAM_MARKERS.THINKING_START)) {
-        return this.parseThinkingBlock();
-      }
-      if (this.buffer.includes(STREAM_MARKERS.PLAN_START)) {
-        return this.parsePlanBlock();
-      }
-      if (this.buffer.includes(STREAM_MARKERS.CONTENT_START)) {
-        return this.parseContentBlock();
-      }
+    if (this.parsingState !== 'idle') {
+      return null;
+    }
 
-      // Check for single-line markers
-      const singleLineMarkers = [
-        {
-          marker: STREAM_MARKERS.PLAN_STEP,
-          type: 'plan_step' as StreamEventType,
-        },
-        {
-          marker: STREAM_MARKERS.TOOL_START,
-          type: 'tool_start' as StreamEventType,
-        },
-        {
-          marker: STREAM_MARKERS.TOOL_PROGRESS,
-          type: 'tool_progress' as StreamEventType,
-        },
-        {
-          marker: STREAM_MARKERS.TOOL_COMPLETE,
-          type: 'tool_complete' as StreamEventType,
-        },
-        {
-          marker: STREAM_MARKERS.DECISION,
-          type: 'decision' as StreamEventType,
-        },
-        {
-          marker: STREAM_MARKERS.COMPLETE,
-          type: 'complete' as StreamEventType,
-        },
-        { marker: STREAM_MARKERS.ERROR, type: 'error' as StreamEventType },
-      ];
+    const nextMarker = this.findNextMarker();
+    if (!nextMarker) {
+      return null;
+    }
 
-      for (const { marker, type } of singleLineMarkers) {
-        if (this.buffer.includes(marker)) {
-          return this.parseSingleLineEvent(marker, type);
-        }
+    if (nextMarker.kind === 'legacy') {
+      return this.parseLegacyOutput();
+    }
+
+    if (nextMarker.kind === 'block') {
+      if (nextMarker.type === 'thinking') return this.parseThinkingBlock();
+      if (nextMarker.type === 'plan') return this.parsePlanBlock();
+      return this.parseContentBlock();
+    }
+
+    return this.parseSingleLineEvent(nextMarker.marker, nextMarker.type);
+  }
+
+  private findNextMarker():
+    | {
+        kind: 'block';
+        marker: string;
+        type: 'thinking' | 'plan' | 'content';
       }
+    | { kind: 'single'; marker: string; type: StreamEventType }
+    | { kind: 'legacy'; marker: string; type: 'legacy' }
+    | null {
+    const candidates: Array<{
+      index: number;
+      marker: string;
+      kind: 'block' | 'single' | 'legacy';
+      type: StreamEventType | 'legacy';
+    }> = [];
 
-      // Check for legacy markers
-      if (
-        this.config.enableLegacyParsing &&
-        this.buffer.includes(LEGACY_MARKERS.OUTPUT_START)
-      ) {
-        return this.parseLegacyOutput();
+    const blockMarkers = [
+      {
+        marker: STREAM_MARKERS.THINKING_START,
+        type: 'thinking' as const,
+      },
+      {
+        marker: STREAM_MARKERS.PLAN_START,
+        type: 'plan' as const,
+      },
+      {
+        marker: STREAM_MARKERS.CONTENT_START,
+        type: 'content' as const,
+      },
+    ];
+
+    for (const { marker, type } of blockMarkers) {
+      const index = this.buffer.indexOf(marker);
+      if (index !== -1) {
+        candidates.push({ index, marker, kind: 'block', type });
       }
     }
 
-    return null;
+    const singleLineMarkers = [
+      {
+        marker: STREAM_MARKERS.PLAN_STEP,
+        type: 'plan_step' as StreamEventType,
+      },
+      {
+        marker: STREAM_MARKERS.TOOL_START,
+        type: 'tool_start' as StreamEventType,
+      },
+      {
+        marker: STREAM_MARKERS.TOOL_PROGRESS,
+        type: 'tool_progress' as StreamEventType,
+      },
+      {
+        marker: STREAM_MARKERS.TOOL_COMPLETE,
+        type: 'tool_complete' as StreamEventType,
+      },
+      {
+        marker: STREAM_MARKERS.DECISION,
+        type: 'decision' as StreamEventType,
+      },
+      {
+        marker: STREAM_MARKERS.COMPLETE,
+        type: 'complete' as StreamEventType,
+      },
+      { marker: STREAM_MARKERS.ERROR, type: 'error' as StreamEventType },
+    ];
+
+    for (const { marker, type } of singleLineMarkers) {
+      const index = this.buffer.indexOf(marker);
+      if (index !== -1) {
+        candidates.push({ index, marker, kind: 'single', type });
+      }
+    }
+
+    if (this.config.enableLegacyParsing) {
+      const index = this.buffer.indexOf(LEGACY_MARKERS.OUTPUT_START);
+      if (index !== -1) {
+        candidates.push({
+          index,
+          marker: LEGACY_MARKERS.OUTPUT_START,
+          kind: 'legacy',
+          type: 'legacy',
+        });
+      }
+    }
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    candidates.sort((a, b) => a.index - b.index);
+    return candidates[0] as
+      | {
+          kind: 'block';
+          marker: string;
+          type: 'thinking' | 'plan' | 'content';
+        }
+      | { kind: 'single'; marker: string; type: StreamEventType }
+      | { kind: 'legacy'; marker: string; type: 'legacy' };
   }
 
   /**
