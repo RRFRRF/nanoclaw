@@ -72,12 +72,25 @@ Updated: 2026-04-07
   - free-text or JSON responses
 - Allowed predefined subagents to use `mcp__nanoclaw__ask_user` while still filtering out the rest of the NanoHarness orchestration tools.
 - Added optional native interrupt policy wiring through `NANOCLAW_INTERRUPT_ON_JSON` so DeepAgents `interruptOn` can be enabled without changing the host protocol.
+- Fixed host-to-container env passthrough so native runtime flags now reach real container runs:
+  - `NANOCLAW_INTERRUPT_ON_JSON`
+  - `NANOCLAW_USE_NATIVE_MEMORY`
+  - predefined subagent toggles, skills, and model overrides
+  - summarization compatibility toggles
 - Added runtime tests for:
   - interrupt payload extraction
   - human-in-the-loop prompt formatting
   - resume payload parsing for single-action, multi-action, and generic interrupt flows
 - Removed default explicit `SummarizationMiddleware` injection from the container runtime after validating the official handbook: DeepAgents already provides built-in summarization/offloading, and double-registration caused startup failure.
 - Added an escape hatch `NANOCLAW_FORCE_LANGCHAIN_SUMMARIZATION_MIDDLEWARE=true` for compatibility experiments only; default behavior now relies on the native DeepAgents harness path.
+- Moved NanoHarness runtime instructions onto the DeepAgents main `systemPrompt` path and now pass runtime metadata through DeepAgents `context` instead of embedding harness instructions inside a synthetic user message.
+- Tightened native stream debug logging:
+  - debug logging is now opt-in instead of effectively on-by-default
+  - debug entries store sanitized shapes instead of raw prompt/chunk payloads
+- Updated native content streaming semantics so token-level `messages` chunks append in the host UI instead of overwriting or rendering as separate full replies.
+- Hardened the host stream parser against partial single-line JSON markers and suppressed false residual-buffer errors in the mixed stdout container path.
+- Changed `mcp__nanoclaw__ask_user` resume handling so plain user replies flow back as raw text, which is safer for OTP/CAPTCHA/manual-entry workflows.
+- Removed the non-native `{ resume }` fallback when LangGraph `Command` is unavailable; HITL resume now fails fast if the native contract is missing.
 
 ## Verified
 

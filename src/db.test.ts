@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
+  _getTestDatabaseHandle,
   _initTestDatabase,
+  _runCreateSchemaForTests,
   createTask,
   deleteTask,
   getAllChats,
   getAllRegisteredGroups,
+  getRegisteredGroup,
   getMessagesSince,
   getNewMessages,
   getTaskById,
@@ -480,5 +483,53 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+describe('registered group container config recovery', () => {
+  it('ignores invalid container_config JSON instead of throwing', () => {
+    setRegisteredGroup('group@g.us', {
+      name: 'Family Chat',
+      folder: 'whatsapp_family-chat',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      containerConfig: { timeout: 1234 } as any,
+    });
+
+    _getTestDatabaseHandle()
+      .prepare(
+        'UPDATE registered_groups SET container_config = ? WHERE jid = ?',
+      )
+      .run('{bad json', 'group@g.us');
+
+    expect(getRegisteredGroup('group@g.us')?.containerConfig).toBeUndefined();
+    expect(getAllRegisteredGroups()['group@g.us']?.containerConfig).toBeUndefined();
+  });
+});
+
+describe('chat schema migration', () => {
+  it('repairs half-applied chats migration idempotently', () => {
+    const database = _getTestDatabaseHandle();
+    database.exec('DROP TABLE chats');
+    database.exec(`
+      CREATE TABLE chats (
+        jid TEXT PRIMARY KEY,
+        name TEXT,
+        last_message_time TEXT,
+        channel TEXT
+      )
+    `);
+    database
+      .prepare(
+        'INSERT INTO chats (jid, name, last_message_time, channel) VALUES (?, ?, ?, ?)',
+      )
+      .run('group@g.us', 'Group', '2024-01-01T00:00:00.000Z', null);
+
+    _runCreateSchemaForTests();
+    _runCreateSchemaForTests();
+
+    const chats = getAllChats();
+    expect(chats[0].channel).toBe('whatsapp');
+    expect(chats[0].is_group).toBe(1);
   });
 });

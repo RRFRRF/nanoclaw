@@ -154,6 +154,28 @@ describe('task scheduler', () => {
     expect(offset).toBe(0);
   });
 
+  it('computeNextRun falls back safely when interval task has no valid next_run', () => {
+    const before = Date.now();
+    const task = {
+      id: 'missing-anchor',
+      group_folder: 'test',
+      chat_jid: 'test@g.us',
+      prompt: 'test',
+      schedule_type: 'interval' as const,
+      schedule_value: '60000',
+      context_mode: 'isolated' as const,
+      next_run: null,
+      last_run: null,
+      last_result: null,
+      status: 'active' as const,
+      created_at: '2026-01-01T00:00:00.000Z',
+    };
+
+    const nextRun = computeNextRun(task);
+    expect(nextRun).not.toBeNull();
+    expect(new Date(nextRun!).getTime()).toBeGreaterThanOrEqual(before + 60000);
+  });
+
   it('classifies transient provider errors for scheduled task retry', () => {
     expect(
       isTransientProviderError(

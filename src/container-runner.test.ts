@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import { PassThrough } from 'stream';
+import { StreamProcessor } from './streaming/index.js';
 
 // Sentinel markers must match container-runner.ts
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -23,6 +24,26 @@ vi.mock('./config.js', () => ({
   IDLE_TIMEOUT: 1800000, // 30min
   MODEL_API_FORMAT: 'anthropic',
   MODEL_PROVIDER: 'anthropic',
+  NANOCLAW_CODER_MODEL: undefined,
+  NANOCLAW_DEBUG_NATIVE_STREAM: undefined,
+  NANOCLAW_DISABLE_NATIVE_STREAM_FALLBACK: undefined,
+  NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS: undefined,
+  NANOCLAW_ENABLE_SUMMARIZATION: undefined,
+  NANOCLAW_FORCE_LANGCHAIN_SUMMARIZATION_MIDDLEWARE: undefined,
+  NANOCLAW_INTERRUPT_ON_JSON: undefined,
+  NANOCLAW_PERSIST_RUNTIME_CONTEXT_CONTENT: undefined,
+  NANOCLAW_RESEARCHER_MODEL: undefined,
+  NANOCLAW_REVIEWER_MODEL: undefined,
+  NANOCLAW_SUBAGENT_CODER_MODEL: undefined,
+  NANOCLAW_SUBAGENT_CODER_SKILLS: undefined,
+  NANOCLAW_SUBAGENT_RESEARCHER_MODEL: undefined,
+  NANOCLAW_SUBAGENT_RESEARCHER_SKILLS: undefined,
+  NANOCLAW_SUBAGENT_REVIEWER_MODEL: undefined,
+  NANOCLAW_SUBAGENT_REVIEWER_SKILLS: undefined,
+  NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS: undefined,
+  NANOCLAW_STREAM_CONTENT_FROM_NATIVE: undefined,
+  NANOCLAW_USE_NATIVE_MEMORY: undefined,
+  NANOCLAW_USE_NATIVE_STREAMING: undefined,
   OPENAI_MODEL: undefined,
   TIMEZONE: 'America/Los_Angeles',
   STREAMING_CONFIG: {
@@ -209,7 +230,7 @@ describe('container-runner timeout behavior', () => {
     expect(onOutput).not.toHaveBeenCalled();
   });
 
-  it('status markers keep a long-running query alive', async () => {
+  it('heartbeat status markers do not keep a stalled query alive forever', async () => {
     const onOutput = vi.fn(async () => {});
     const resultPromise = runContainerAgent(
       testGroup,
@@ -229,7 +250,7 @@ describe('container-runner timeout behavior', () => {
     });
     await vi.advanceTimersByTimeAsync(10);
 
-    await vi.advanceTimersByTimeAsync(1820000);
+    await vi.advanceTimersByTimeAsync(119000);
     emitOutputMarker(fakeProc, {
       status: 'success',
       result: null,
@@ -241,18 +262,66 @@ describe('container-runner timeout behavior', () => {
     });
     await vi.advanceTimersByTimeAsync(10);
 
-    await vi.advanceTimersByTimeAsync(1820000);
-    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(2000);
+    fakeProc.emit('close', 137);
     await vi.advanceTimersByTimeAsync(10);
 
     const result = await resultPromise;
-    expect(result.status).toBe('success');
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('no meaningful progress for 120000ms');
     expect(onOutput).toHaveBeenCalledWith(
       expect.objectContaining({
         event: expect.objectContaining({
           type: 'status',
           text: 'Still working inside the container. Elapsed 30m 20s.',
         }),
+      }),
+    );
+  });
+
+  it('meaningful stream progress resets the query progress timeout', async () => {
+    const onStreamEvent = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      undefined,
+      onStreamEvent,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: null,
+      event: {
+        type: 'status',
+        text: 'Starting Deep Agents query...',
+        replace: true,
+      },
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    await vi.advanceTimersByTimeAsync(119000);
+    fakeProc.stdout.push(
+      '<<<CONTENT>>>{"type":"content","timestamp":"2024-01-01T00:00:00Z","data":{"text":"partial"}}<<<CONTENT_END>>>',
+    );
+    await vi.advanceTimersByTimeAsync(10);
+
+    await vi.advanceTimersByTimeAsync(119000);
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'final answer',
+      newSessionId: 'session-progress',
+      lastAssistantUuid: 'assistant-progress',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+    expect(onStreamEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'content',
       }),
     );
   });
@@ -311,6 +380,44 @@ describe('container-runner timeout behavior', () => {
         content: 'reasoning',
       }),
     );
+  });
+
+  it('forwards flushed stream events before resolving close', async () => {
+    const flushSpy = vi
+      .spyOn(StreamProcessor.prototype, 'flush')
+      .mockReturnValueOnce([
+        {
+          type: 'decision',
+          timestamp: '2024-01-01T00:00:00Z',
+          data: {
+            description: 'Flushed event',
+            choice: 'close',
+          },
+        } as any,
+      ]);
+    const onStreamEvent = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      undefined,
+      onStreamEvent,
+    );
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await resultPromise;
+    expect(onStreamEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'decision',
+        data: expect.objectContaining({
+          description: 'Flushed event',
+        }),
+      }),
+    );
+
+    flushSpy.mockRestore();
   });
 
   it('passes query completion markers through streaming callbacks', async () => {

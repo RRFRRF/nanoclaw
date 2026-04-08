@@ -47,10 +47,26 @@ async function loadRunner(provider: Provider, authMode: AuthMode) {
     GROUPS_DIR: '/tmp/nanoclaw-test-groups',
     IDLE_TIMEOUT: 1800000,
     MODEL_API_FORMAT: provider === 'openai' ? 'openai-responses' : 'anthropic',
+    NANOCLAW_CODER_MODEL: 'coder-model',
     NANOCLAW_DEBUG_NATIVE_STREAM: 'true',
     NANOCLAW_DISABLE_NATIVE_STREAM_FALLBACK: undefined,
+    NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS: 'true',
+    NANOCLAW_ENABLE_SUMMARIZATION: 'true',
+    NANOCLAW_FORCE_LANGCHAIN_SUMMARIZATION_MIDDLEWARE: undefined,
+    NANOCLAW_INTERRUPT_ON_JSON: '{"write_file":true}',
+    NANOCLAW_PERSIST_RUNTIME_CONTEXT_CONTENT: undefined,
+    NANOCLAW_RESEARCHER_MODEL: 'researcher-model',
+    NANOCLAW_REVIEWER_MODEL: 'reviewer-model',
+    NANOCLAW_SUBAGENT_CODER_MODEL: 'coder-subagent-model',
+    NANOCLAW_SUBAGENT_CODER_SKILLS: '/skills/coder',
+    NANOCLAW_SUBAGENT_RESEARCHER_MODEL: 'researcher-subagent-model',
+    NANOCLAW_SUBAGENT_RESEARCHER_SKILLS: '/skills/researcher',
+    NANOCLAW_SUBAGENT_REVIEWER_MODEL: 'reviewer-subagent-model',
+    NANOCLAW_SUBAGENT_REVIEWER_SKILLS: '/skills/reviewer',
+    NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS: 'true',
     NANOCLAW_STREAM_CONTENT_FROM_NATIVE: 'true',
     NANOCLAW_USE_NATIVE_STREAMING: 'true',
+    NANOCLAW_USE_NATIVE_MEMORY: 'true',
     OPENAI_MODEL: 'gpt-test-model',
     STREAMING_CONFIG: {
       ENABLED: true,
@@ -173,6 +189,20 @@ describe('container-runner provider env injection', () => {
     expect(args).toContain('NANOCLAW_USE_NATIVE_STREAMING=true');
     expect(args).toContain('NANOCLAW_STREAM_CONTENT_FROM_NATIVE=true');
     expect(args).toContain('NANOCLAW_DEBUG_NATIVE_STREAM=true');
+    expect(args).toContain('NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS=true');
+    expect(args).toContain('NANOCLAW_USE_NATIVE_MEMORY=true');
+    expect(args).toContain('NANOCLAW_INTERRUPT_ON_JSON={"write_file":true}');
+    expect(args).toContain('NANOCLAW_SUBAGENT_RESEARCHER_SKILLS=/skills/researcher');
+    expect(args).toContain('NANOCLAW_SUBAGENT_CODER_SKILLS=/skills/coder');
+    expect(args).toContain('NANOCLAW_SUBAGENT_REVIEWER_SKILLS=/skills/reviewer');
+    expect(args).toContain('NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS=true');
+    expect(args).toContain(
+      'NANOCLAW_SUBAGENT_RESEARCHER_MODEL=researcher-subagent-model',
+    );
+    expect(args).toContain('NANOCLAW_SUBAGENT_CODER_MODEL=coder-subagent-model');
+    expect(args).toContain(
+      'NANOCLAW_SUBAGENT_REVIEWER_MODEL=reviewer-subagent-model',
+    );
     expect(args).not.toContain(
       'OPENAI_BASE_URL=http://host.docker.internal:3001',
     );
@@ -212,6 +242,20 @@ describe('container-runner provider env injection', () => {
     expect(args).toContain('NANOCLAW_USE_NATIVE_STREAMING=true');
     expect(args).toContain('NANOCLAW_STREAM_CONTENT_FROM_NATIVE=true');
     expect(args).toContain('NANOCLAW_DEBUG_NATIVE_STREAM=true');
+    expect(args).toContain('NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS=true');
+    expect(args).toContain('NANOCLAW_USE_NATIVE_MEMORY=true');
+    expect(args).toContain('NANOCLAW_INTERRUPT_ON_JSON={"write_file":true}');
+    expect(args).toContain('NANOCLAW_SUBAGENT_RESEARCHER_SKILLS=/skills/researcher');
+    expect(args).toContain('NANOCLAW_SUBAGENT_CODER_SKILLS=/skills/coder');
+    expect(args).toContain('NANOCLAW_SUBAGENT_REVIEWER_SKILLS=/skills/reviewer');
+    expect(args).toContain('NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS=true');
+    expect(args).toContain(
+      'NANOCLAW_SUBAGENT_RESEARCHER_MODEL=researcher-subagent-model',
+    );
+    expect(args).toContain('NANOCLAW_SUBAGENT_CODER_MODEL=coder-subagent-model');
+    expect(args).toContain(
+      'NANOCLAW_SUBAGENT_REVIEWER_MODEL=reviewer-subagent-model',
+    );
     expect(args).not.toContain(
       'ANTHROPIC_BASE_URL=http://host.docker.internal:3001',
     );

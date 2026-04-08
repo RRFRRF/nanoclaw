@@ -57,9 +57,27 @@ export function computeNextRun(task: ScheduledTask): string | null {
       );
       return new Date(now + 60_000).toISOString();
     }
+    const nextRunMs = task.next_run ? new Date(task.next_run).getTime() : NaN;
+    const lastRunMs = task.last_run ? new Date(task.last_run).getTime() : NaN;
+    const anchorMs = Number.isFinite(nextRunMs)
+      ? nextRunMs
+      : Number.isFinite(lastRunMs)
+        ? lastRunMs
+        : now;
+
+    if (!Number.isFinite(nextRunMs)) {
+      logger.warn(
+        {
+          taskId: task.id,
+          nextRun: task.next_run,
+          lastRun: task.last_run,
+        },
+        'Interval task missing valid next_run anchor, falling back to last_run/now',
+      );
+    }
     // Anchor to the scheduled time, not now, to prevent drift.
     // Skip past any missed intervals so we always land in the future.
-    let next = new Date(task.next_run!).getTime() + ms;
+    let next = anchorMs + ms;
     while (next <= now) {
       next += ms;
     }

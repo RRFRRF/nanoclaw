@@ -87,6 +87,7 @@ export interface DecisionEventData {
 // Content event data
 export interface ContentEventData {
   text: string;
+  replace?: boolean;
 }
 
 // Error event data

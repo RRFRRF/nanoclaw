@@ -10,6 +10,7 @@ export interface NormalizedRunState {
   sentVisibleResult: boolean;
   observedQueryCompleted: boolean;
   observedStreamCompletion: boolean;
+  observedStreamError: boolean;
   hadStreamingActivity: boolean;
 }
 
@@ -28,6 +29,7 @@ export function createNormalizedRunState(): NormalizedRunState {
     sentVisibleResult: false,
     observedQueryCompleted: false,
     observedStreamCompletion: false,
+    observedStreamError: false,
     hadStreamingActivity: false,
   };
 }
@@ -48,10 +50,17 @@ export function markNormalizedStreamEvent(
   state: NormalizedRunState,
   event: { type: string },
 ): void {
-  if (event.type !== 'error') {
+  if (event.type === 'error') {
+    state.observedStreamError = true;
+  } else {
     state.hadStreamingActivity = true;
   }
-  if (event.type === 'complete') {
+  if (
+    event.type === 'complete' &&
+    !state.observedStreamError &&
+    !state.observedQueryCompleted &&
+    !state.sentVisibleResult
+  ) {
     state.observedStreamCompletion = true;
   }
 }

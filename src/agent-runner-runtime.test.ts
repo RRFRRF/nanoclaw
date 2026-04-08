@@ -196,23 +196,42 @@ describe('agent runner runtime diagnostics', () => {
         },
       ) => {
         runtimePrompt: string;
+        userPrompt: string;
+        runtimeContext: {
+          workingDirectory: string;
+          pendingIpcMessages: string[];
+          sessionId?: string;
+        };
         snapshot: {
           pendingIpcMessages: string[];
           workspaceManifestPath: string;
+          persistedContent: boolean;
+          basePromptLength: number;
+          finalPromptLength: number;
+          basePrompt: string | null;
+          finalPrompt: string | null;
+          runtimeContext: {
+            workingDirectory: string;
+            pendingIpcMessages: string[];
+            sessionId?: string;
+          };
           memories: {
             group: {
               path: string;
               included: boolean;
+              contentLength: number;
               content: string | null;
             };
             global: {
               path: string;
               included: boolean;
+              contentLength: number;
               content: string | null;
             };
             project: {
               path: string;
               included: boolean;
+              contentLength: number;
               content: string | null;
             };
           };
@@ -259,6 +278,12 @@ describe('agent runner runtime diagnostics', () => {
           allowScheduledTasks: boolean;
         },
       ) => string | null;
+      shouldSuppressLegacyFinalResult: (options: {
+        finalText: string;
+        nativeStreamingUsed: boolean;
+        emittedMainAssistantContent: boolean;
+        bufferedMainAssistantText: string;
+      }) => boolean;
       parseConfiguredMcpServers: (raw?: string) => Array<{
         name: string;
         command: string;
@@ -302,6 +327,7 @@ describe('agent runner runtime diagnostics', () => {
       }>;
       buildDelegationPolicyLines: () => string[];
       extractStreamChunkText: (chunk: unknown) => string;
+      isNativeMainAssistantNamespace: (namespace: string[]) => boolean;
       normalizeNativeStreamChunk: (part: unknown) => {
         namespace: string[];
         mode: string;
@@ -392,10 +418,28 @@ describe('agent runner runtime diagnostics', () => {
     expect(bundle.runtimePrompt).toContain('group memory');
     expect(bundle.runtimePrompt).toContain('<project_memory>');
     expect(bundle.runtimePrompt).toContain('project memory');
+    expect(bundle.runtimePrompt).not.toContain(
+      '<message sender="user" time="2026-04-01 10:00">test</message>',
+    );
+    expect(bundle.userPrompt).toContain(
+      '<message sender="user" time="2026-04-01 10:00">test</message>',
+    );
     expect(bundle.snapshot.pendingIpcMessages).toEqual(['follow-up message']);
     expect(bundle.snapshot.workspaceManifestPath).toBe(
       '/workspace/group/.nanoclaw/workspace-manifest.json',
     );
+    expect(bundle.snapshot.persistedContent).toBe(false);
+    expect(bundle.snapshot.basePromptLength).toBeGreaterThan(0);
+    expect(bundle.snapshot.finalPromptLength).toBeGreaterThan(0);
+    expect(bundle.snapshot.basePrompt).toBeNull();
+    expect(bundle.snapshot.finalPrompt).toBeNull();
+    expect(bundle.snapshot.memories.group.content).toBeNull();
+    expect(bundle.snapshot.memories.group.contentLength).toBeGreaterThan(0);
+    expect(bundle.runtimeContext).toMatchObject({
+      workingDirectory: '/workspace/group',
+      pendingIpcMessages: ['follow-up message'],
+      sessionId: 'session-1',
+    });
   });
 
   it('can switch CLAUDE.md files to native deepagents memory paths', async () => {
@@ -465,6 +509,33 @@ describe('agent runner runtime diagnostics', () => {
     expect(bundle.snapshot.memories.project.path).toBe(
       '/workspace/project/AGENTS.md',
     );
+  });
+
+  it('can opt back into persisting full runtime context content for debugging', async () => {
+    const mod = await loadRuntimeModule();
+    process.env.NANOCLAW_PERSIST_RUNTIME_CONTEXT_CONTENT = 'true';
+
+    const bundle = mod.buildRuntimePromptBundle(
+      '<messages>\n<message sender="user">persist me</message>\n</messages>',
+      {
+        prompt: 'ignored',
+        groupFolder: 'local-test',
+        chatJid: 'local:test',
+        isMain: true,
+      },
+      {
+        sessionId: 'session-1',
+      },
+    );
+
+    expect(bundle.snapshot.persistedContent).toBe(true);
+    expect(bundle.snapshot.basePrompt).toContain('persist me');
+    expect(bundle.snapshot.finalPrompt).toContain(
+      'You are running inside NanoHarness on a Deep Agents runtime.',
+    );
+    expect(bundle.snapshot.memories.group.content).toBe('group memory');
+
+    delete process.env.NANOCLAW_PERSIST_RUNTIME_CONTEXT_CONTENT;
   });
 
   it('builds a workspace manifest centered on the group workspace', async () => {
@@ -668,6 +739,21 @@ describe('agent runner runtime diagnostics', () => {
       mod.getAutoContinueReason(
         {
           closedDuringQuery: false,
+          lastAssistantText: 'Hi there! I am Andy. What can I help you with?',
+          lastResultText: null,
+          lastResultSubtype: 'success',
+          sawStatusEvent: true,
+        },
+        false,
+        0,
+        { limit: 3, allowScheduledTasks: true },
+      ),
+    ).toBeNull();
+
+    expect(
+      mod.getAutoContinueReason(
+        {
+          closedDuringQuery: false,
           lastAssistantText: 'done',
           lastResultText: 'final answer',
           lastResultSubtype: 'error',
@@ -693,6 +779,56 @@ describe('agent runner runtime diagnostics', () => {
         { limit: 3, allowScheduledTasks: true },
       ),
     ).toBeNull();
+  });
+
+  it('suppresses legacy final output when native content already emitted the same text', async () => {
+    const mod = await loadRuntimeModule();
+
+    expect(
+      mod.shouldSuppressLegacyFinalResult({
+        finalText: 'Hi there! I am Andy.',
+        nativeStreamingUsed: true,
+        emittedMainAssistantContent: true,
+        bufferedMainAssistantText: 'Hi there! I am Andy.',
+      }),
+    ).toBe(true);
+
+    expect(
+      mod.shouldSuppressLegacyFinalResult({
+        finalText: 'Hi there! I am Andy.',
+        nativeStreamingUsed: false,
+        emittedMainAssistantContent: true,
+        bufferedMainAssistantText: 'Hi there! I am Andy.',
+      }),
+    ).toBe(false);
+
+    expect(
+      mod.shouldSuppressLegacyFinalResult({
+        finalText: 'Hi there! I am Andy.',
+        nativeStreamingUsed: true,
+        emittedMainAssistantContent: false,
+        bufferedMainAssistantText: 'Hi there! I am Andy.',
+      }),
+    ).toBe(false);
+
+    expect(
+      mod.shouldSuppressLegacyFinalResult({
+        finalText: 'Hi there! I am Andy.',
+        nativeStreamingUsed: true,
+        emittedMainAssistantContent: true,
+        bufferedMainAssistantText: 'Different text',
+      }),
+    ).toBe(false);
+  });
+
+  it('treats non-tool namespaces as main assistant stream namespaces', async () => {
+    const mod = await loadRuntimeModule();
+
+    expect(mod.isNativeMainAssistantNamespace([])).toBe(true);
+    expect(mod.isNativeMainAssistantNamespace(['model_request'])).toBe(true);
+    expect(
+      mod.isNativeMainAssistantNamespace(['tools:call_abc123']),
+    ).toBe(false);
   });
 
   it('renders MCP tool results from text, links, and structured content', async () => {
@@ -1025,6 +1161,7 @@ describe('agent runner runtime diagnostics', () => {
     const mod = await loadRuntimeModule();
 
     expect(mod.extractStreamChunkText('hello')).toBe('hello');
+    expect(mod.extractStreamChunkText(' ')).toBe(' ');
     expect(
       mod.extractStreamChunkText({
         text: 'partial answer',
@@ -1035,6 +1172,11 @@ describe('agent runner runtime diagnostics', () => {
         content: [{ text: 'chunk ' }, { text: 'output' }],
       }),
     ).toBe('chunk output');
+    expect(
+      mod.extractStreamChunkText({
+        content: [{ text: 'Hello' }, { text: ' ' }, { text: 'world' }],
+      }),
+    ).toBe('Hello world');
     expect(
       mod.extractStreamChunkText({
         messages: [{ role: 'assistant', content: 'final answer' }],
@@ -1340,12 +1482,9 @@ describe('agent runner runtime diagnostics', () => {
 
     expect(
       mod.parseHumanInLoopResumeInput('captcha is 7788', {
+        type: 'nanoclaw_user_input',
         message: 'Need code',
       }),
-    ).toEqual({
-      response: 'captcha is 7788',
-      text: 'captcha is 7788',
-      value: 'captcha is 7788',
-    });
+    ).toBe('captcha is 7788');
   });
 });

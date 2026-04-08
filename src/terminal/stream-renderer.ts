@@ -7,6 +7,7 @@ export interface TerminalStreamRenderItem {
   text: string;
   tone: 'system' | 'error' | 'agent';
   mergeKey?: string;
+  mergeMode?: 'append' | 'replace';
 }
 
 export function mapStreamEventToRenderItems(
@@ -20,6 +21,7 @@ export function mapStreamEventToRenderItems(
     text: string | null | undefined,
     tone: 'system' | 'error' | 'agent' = 'system',
     mergeKey?: string,
+    mergeMode?: 'append' | 'replace',
   ) => {
     if (!text) return;
     items.push({
@@ -28,6 +30,7 @@ export function mapStreamEventToRenderItems(
       text,
       tone,
       mergeKey,
+      mergeMode,
     });
   };
 
@@ -135,9 +138,9 @@ export function mapStreamEventToRenderItems(
       break;
     }
     case 'content': {
-      const data = event.data as { text?: string };
+      const data = event.data as { text?: string; replace?: boolean };
       if (typeof data?.text === 'string' && data.text) {
-        push(data.text, 'agent', jid);
+        push(data.text, 'agent', jid, data.replace === true ? 'replace' : 'append');
       }
       break;
     }

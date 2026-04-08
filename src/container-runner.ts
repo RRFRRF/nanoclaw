@@ -20,10 +20,26 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   MODEL_API_FORMAT,
+  NANOCLAW_CODER_MODEL,
   NANOCLAW_DEBUG_NATIVE_STREAM,
   NANOCLAW_DISABLE_NATIVE_STREAM_FALLBACK,
+  NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS,
+  NANOCLAW_ENABLE_SUMMARIZATION,
+  NANOCLAW_FORCE_LANGCHAIN_SUMMARIZATION_MIDDLEWARE,
+  NANOCLAW_INTERRUPT_ON_JSON,
+  NANOCLAW_PERSIST_RUNTIME_CONTEXT_CONTENT,
+  NANOCLAW_RESEARCHER_MODEL,
+  NANOCLAW_REVIEWER_MODEL,
+  NANOCLAW_SUBAGENT_CODER_MODEL,
+  NANOCLAW_SUBAGENT_CODER_SKILLS,
+  NANOCLAW_SUBAGENT_RESEARCHER_MODEL,
+  NANOCLAW_SUBAGENT_RESEARCHER_SKILLS,
+  NANOCLAW_SUBAGENT_REVIEWER_MODEL,
+  NANOCLAW_SUBAGENT_REVIEWER_SKILLS,
+  NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS,
   NANOCLAW_STREAM_CONTENT_FROM_NATIVE,
   NANOCLAW_USE_NATIVE_STREAMING,
+  NANOCLAW_USE_NATIVE_MEMORY,
   OPENAI_MODEL,
   STREAMING_CONFIG,
   TIMEZONE,
@@ -88,6 +104,54 @@ export interface ContainerOutput {
   nativeCompact?: NativeCompactOutcome;
 }
 
+const QUERY_START_STATUS_TEXT = 'Starting Deep Agents query...';
+const HEARTBEAT_STATUS_PREFIX = 'Still working inside the container. Elapsed ';
+
+function getQueryProgressTimeoutMs(): number {
+  const parsed = Number.parseInt(
+    process.env.NANOCLAW_QUERY_PROGRESS_TIMEOUT_MS || '120000',
+    10,
+  );
+  if (Number.isNaN(parsed) || parsed < 30000) {
+    return 120000;
+  }
+  return parsed;
+}
+
+function isStatusOutput(output: ContainerOutput): boolean {
+  return output.event?.type === 'status' && typeof output.event.text === 'string';
+}
+
+function isQueryStartStatusOutput(output: ContainerOutput): boolean {
+  return isStatusOutput(output) && output.event!.text === QUERY_START_STATUS_TEXT;
+}
+
+function isHeartbeatStatusOutput(output: ContainerOutput): boolean {
+  return (
+    isStatusOutput(output) &&
+    output.event!.text.startsWith(HEARTBEAT_STATUS_PREFIX)
+  );
+}
+
+function isMeaningfulContainerOutput(output: ContainerOutput): boolean {
+  if (output.result) return true;
+  if (output.queryCompleted) return true;
+  return output.event?.type === 'assistant';
+}
+
+function isMeaningfulStreamEvent(event: StreamEvent): boolean {
+  return [
+    'thinking',
+    'plan',
+    'plan_step',
+    'tool_start',
+    'tool_progress',
+    'tool_complete',
+    'content',
+    'complete',
+  ].includes(event.type);
+}
+
 interface VolumeMount {
   hostPath: string;
   containerPath: string;
@@ -96,6 +160,92 @@ interface VolumeMount {
 
 function escapeLogChunk(chunk: string): string {
   return chunk.replace(/\r\n/g, '\n');
+}
+
+function isTerminalTestMode(): boolean {
+  return process.env.NANOCLAW_TERMINAL_TEST_MODE === 'true';
+}
+
+function extractLatestUserMessage(prompt: string): string {
+  const matches = [...prompt.matchAll(/<message\b[^>]*>([\s\S]*?)<\/message>/g)];
+  const raw = matches.at(-1)?.[1] || prompt;
+  return raw
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .trim();
+}
+
+function buildFakeAgentResponse(prompt: string): string {
+  const latestMessage = extractLatestUserMessage(prompt);
+  const normalized = latestMessage.toLowerCase();
+
+  if (
+    normalized.includes('苏州天气') ||
+    normalized.includes('suzhou weather')
+  ) {
+    return '苏州天气测试响应：多云，25°C，东南风 2 级。';
+  }
+
+  if (
+    normalized.includes('hi') ||
+    normalized.includes('hello') ||
+    normalized.includes('hihihi') ||
+    normalized.includes('你好')
+  ) {
+    return '你好！我是 NanoHarness 终端测试助手。';
+  }
+
+  return `测试响应：${latestMessage || '已收到。'}`;
+}
+
+async function runFakeContainerAgent(
+  group: RegisteredGroup,
+  input: ContainerInput,
+  onOutput?: (output: ContainerOutput) => Promise<void>,
+  onStreamEvent?: (event: StreamEvent) => Promise<void>,
+): Promise<ContainerOutput> {
+  const sessionId = input.sessionId || `fake-session-${group.folder}`;
+  const lastAssistantUuid = `fake-msg-${Date.now()}`;
+  const response = buildFakeAgentResponse(input.prompt);
+
+  await onOutput?.({
+    status: 'success',
+    result: null,
+    newSessionId: sessionId,
+    lastAssistantUuid,
+    event: {
+      type: 'status',
+      text: 'Starting Deep Agents query...',
+      replace: true,
+    },
+  });
+
+  await onStreamEvent?.({
+    type: 'decision',
+    timestamp: new Date().toISOString(),
+    data: {
+      description: 'Fake terminal backend',
+      choice: 'deterministic test response',
+    },
+  });
+
+  await onStreamEvent?.({
+    type: 'content',
+    timestamp: new Date().toISOString(),
+    data: {
+      text: response,
+      replace: true,
+    },
+  });
+
+  return {
+    status: 'success',
+    result: response,
+    newSessionId: sessionId,
+    lastAssistantUuid,
+    queryCompleted: true,
+  };
 }
 
 function buildVolumeMounts(
@@ -314,6 +464,42 @@ function buildContainerArgs(
     ['NANOCLAW_AGENT_MAX_RETRIES', process.env.NANOCLAW_AGENT_MAX_RETRIES],
     ['NANOCLAW_AGENT_RETRY_BASE_MS', process.env.NANOCLAW_AGENT_RETRY_BASE_MS],
     ['NANOCLAW_MCP_SERVERS_JSON', process.env.NANOCLAW_MCP_SERVERS_JSON],
+    ['NANOCLAW_ENABLE_SUMMARIZATION', NANOCLAW_ENABLE_SUMMARIZATION],
+    [
+      'NANOCLAW_FORCE_LANGCHAIN_SUMMARIZATION_MIDDLEWARE',
+      NANOCLAW_FORCE_LANGCHAIN_SUMMARIZATION_MIDDLEWARE,
+    ],
+    [
+      'NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS',
+      NANOCLAW_ENABLE_PREDEFINED_SUBAGENTS,
+    ],
+    ['NANOCLAW_USE_NATIVE_MEMORY', NANOCLAW_USE_NATIVE_MEMORY],
+    ['NANOCLAW_INTERRUPT_ON_JSON', NANOCLAW_INTERRUPT_ON_JSON],
+    [
+      'NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS',
+      NANOCLAW_SUBAGENT_SHARE_MAIN_SKILLS,
+    ],
+    [
+      'NANOCLAW_SUBAGENT_RESEARCHER_SKILLS',
+      NANOCLAW_SUBAGENT_RESEARCHER_SKILLS,
+    ],
+    ['NANOCLAW_SUBAGENT_CODER_SKILLS', NANOCLAW_SUBAGENT_CODER_SKILLS],
+    [
+      'NANOCLAW_SUBAGENT_REVIEWER_SKILLS',
+      NANOCLAW_SUBAGENT_REVIEWER_SKILLS,
+    ],
+    [
+      'NANOCLAW_SUBAGENT_RESEARCHER_MODEL',
+      NANOCLAW_SUBAGENT_RESEARCHER_MODEL,
+    ],
+    ['NANOCLAW_RESEARCHER_MODEL', NANOCLAW_RESEARCHER_MODEL],
+    ['NANOCLAW_SUBAGENT_CODER_MODEL', NANOCLAW_SUBAGENT_CODER_MODEL],
+    ['NANOCLAW_CODER_MODEL', NANOCLAW_CODER_MODEL],
+    [
+      'NANOCLAW_SUBAGENT_REVIEWER_MODEL',
+      NANOCLAW_SUBAGENT_REVIEWER_MODEL,
+    ],
+    ['NANOCLAW_REVIEWER_MODEL', NANOCLAW_REVIEWER_MODEL],
     ['NANOCLAW_STREAMING', process.env.NANOCLAW_STREAMING],
     ['NANOCLAW_SHOW_THINKING', process.env.NANOCLAW_SHOW_THINKING],
     ['NANOCLAW_SHOW_PLAN', process.env.NANOCLAW_SHOW_PLAN],
@@ -329,6 +515,10 @@ function buildContainerArgs(
     [
       'NANOCLAW_DISABLE_NATIVE_STREAM_FALLBACK',
       NANOCLAW_DISABLE_NATIVE_STREAM_FALLBACK,
+    ],
+    [
+      'NANOCLAW_PERSIST_RUNTIME_CONTEXT_CONTENT',
+      NANOCLAW_PERSIST_RUNTIME_CONTEXT_CONTENT,
     ],
   ] as const;
   for (const [key, value] of passthroughEnv) {
@@ -371,6 +561,11 @@ export async function runContainerAgent(
   onStreamEvent?: (event: StreamEvent) => Promise<void>, // New streaming callback
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
+
+  if (isTerminalTestMode()) {
+    logger.debug({ group: group.name }, 'Using fake terminal test backend');
+    return runFakeContainerAgent(group, input, onOutput, onStreamEvent);
+  }
 
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
@@ -434,6 +629,10 @@ export async function runContainerAgent(
     let stderr = '';
     let stdoutTruncated = false;
     let stderrTruncated = false;
+    const queryProgressTimeoutMs = getQueryProgressTimeoutMs();
+    let queryActive = false;
+    let queryProgressTimedOut = false;
+    let queryProgressTimer: ReturnType<typeof setTimeout> | null = null;
 
     // Initialize streaming processor if streaming is enabled
     const streamingEnabled =
@@ -455,6 +654,7 @@ export async function runContainerAgent(
         showTools: STREAMING_CONFIG.SHOW_TOOLS,
         collapseThinking: STREAMING_CONFIG.THINKING_COLLAPSED,
         maxEvents: STREAMING_CONFIG.MAX_EVENTS,
+        emitResidualBufferErrors: false,
       };
       streamProcessor = new StreamProcessor(processorOptions, false);
     }
@@ -479,6 +679,24 @@ export async function runContainerAgent(
     // Streaming output: parse OUTPUT_START/END marker pairs as they arrive
     let parseBuffer = '';
     let outputChain = Promise.resolve();
+    const forwardStreamEvents = (
+      events: StreamEvent[],
+      options?: { resetTimer?: boolean },
+    ) => {
+      for (const event of events) {
+        streamEvents.push(event);
+        if (onStreamEvent) {
+          outputChain = outputChain.then(() => onStreamEvent(event));
+        }
+        trackContainerStreamEvent(lifecycle, event);
+        if (queryActive && isMeaningfulStreamEvent(event)) {
+          resetQueryProgressTimeout();
+        }
+        if (options?.resetTimer !== false) {
+          resetTimeout();
+        }
+      }
+    };
 
     container.stdout.on('data', (data) => {
       const chunk = data.toString();
@@ -515,6 +733,19 @@ export async function runContainerAgent(
           try {
             const parsed: ContainerOutput = JSON.parse(jsonStr);
             trackContainerOutput(lifecycle, parsed);
+            if (isQueryStartStatusOutput(parsed)) {
+              queryActive = true;
+              resetQueryProgressTimeout();
+            } else if (parsed.queryCompleted) {
+              queryActive = false;
+              clearQueryProgressTimeout();
+            } else if (
+              queryActive &&
+              isMeaningfulContainerOutput(parsed) &&
+              !isHeartbeatStatusOutput(parsed)
+            ) {
+              resetQueryProgressTimeout();
+            }
             // Activity detected — reset the hard timeout
             resetTimeout();
             // Call onOutput for all markers (including null results)
@@ -532,14 +763,7 @@ export async function runContainerAgent(
       // Parse streaming events if enabled
       if (streamProcessor) {
         const events = streamProcessor.processChunk(chunk);
-        for (const event of events) {
-          streamEvents.push(event);
-          if (onStreamEvent) {
-            outputChain = outputChain.then(() => onStreamEvent(event));
-          }
-          trackContainerStreamEvent(lifecycle, event);
-          resetTimeout();
-        }
+        forwardStreamEvents(events);
       }
     });
 
@@ -597,12 +821,46 @@ export async function runContainerAgent(
       timeout = setTimeout(killOnTimeout, timeoutMs);
     };
 
+    const clearQueryProgressTimeout = () => {
+      if (queryProgressTimer) {
+        clearTimeout(queryProgressTimer);
+        queryProgressTimer = null;
+      }
+    };
+
+    const killOnQueryProgressTimeout = () => {
+      queryProgressTimedOut = true;
+      timedOut = true;
+      logger.error(
+        { group: group.name, containerName, queryProgressTimeoutMs },
+        'Container query made no meaningful progress, stopping gracefully',
+      );
+      exec(stopContainer(containerName), { timeout: 15000 }, (err) => {
+        if (err) {
+          logger.warn(
+            { group: group.name, containerName, err },
+            'Graceful stop after query progress timeout failed, force killing',
+          );
+          container.kill('SIGKILL');
+        }
+      });
+    };
+
+    const resetQueryProgressTimeout = () => {
+      clearQueryProgressTimeout();
+      queryProgressTimer = setTimeout(
+        killOnQueryProgressTimeout,
+        queryProgressTimeoutMs,
+      );
+    };
+
     container.on('close', (code) => {
       clearTimeout(timeout);
+      clearQueryProgressTimeout();
       // Flush any remaining stream events and cleanup
       if (streamProcessor) {
         const remainingEvents = streamProcessor.flush();
-        streamEvents.push(...remainingEvents);
+        forwardStreamEvents(remainingEvents, { resetTimer: false });
         streamProcessor.dispose();
       }
       const duration = Date.now() - startTime;
@@ -625,10 +883,26 @@ export async function runContainerAgent(
         try {
           fs.appendFileSync(
             streamLogFile,
-            `\n[${new Date().toISOString()}] [system] Container timed out after ${duration}ms\n`,
+            `\n[${new Date().toISOString()}] [system] Container timed out after ${duration}ms${queryProgressTimedOut ? ' (query progress timeout)' : ''}\n`,
           );
         } catch {
           // ignore
+        }
+
+        if (queryProgressTimedOut) {
+          logger.error(
+            { group: group.name, containerName, duration, code },
+            'Container query progress timeout triggered',
+          );
+          outputChain.then(() => {
+            resolve({
+              status: 'error',
+              result: null,
+              error: `Container query made no meaningful progress for ${queryProgressTimeoutMs}ms`,
+              streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
+            });
+          });
+          return;
         }
 
         // Timeout after output = idle cleanup, not failure.
@@ -656,11 +930,13 @@ export async function runContainerAgent(
           'Container timed out with no output',
         );
 
-        resolve({
-          status: 'error',
-          result: null,
-          error: `Container timed out after ${configTimeout}ms`,
-          streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
+        outputChain.then(() => {
+          resolve({
+            status: 'error',
+            result: null,
+            error: `Container timed out after ${configTimeout}ms`,
+            streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
+          });
         });
         return;
       }
@@ -754,11 +1030,13 @@ export async function runContainerAgent(
           'Container exited with error',
         );
 
-        resolve({
-          status: 'error',
-          result: null,
-          error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
-          streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
+        outputChain.then(() => {
+          resolve({
+            status: 'error',
+            result: null,
+            error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
+            streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
+          });
         });
         return;
       }
@@ -819,7 +1097,7 @@ export async function runContainerAgent(
           output.streamEvents = streamEvents;
         }
 
-        resolve(output);
+        outputChain.then(() => resolve(output));
       } catch (err) {
         logger.error(
           {
@@ -831,11 +1109,13 @@ export async function runContainerAgent(
           'Failed to parse container output',
         );
 
-        resolve({
-          status: 'error',
-          result: null,
-          error: `Failed to parse container output: ${err instanceof Error ? err.message : String(err)}`,
-          streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
+        outputChain.then(() => {
+          resolve({
+            status: 'error',
+            result: null,
+            error: `Failed to parse container output: ${err instanceof Error ? err.message : String(err)}`,
+            streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
+          });
         });
       }
     });
@@ -845,18 +1125,20 @@ export async function runContainerAgent(
       // Flush any remaining stream events
       if (streamProcessor) {
         const remainingEvents = streamProcessor.flush();
-        streamEvents.push(...remainingEvents);
+        forwardStreamEvents(remainingEvents, { resetTimer: false });
         streamProcessor.dispose();
       }
       logger.error(
         { group: group.name, containerName, error: err },
         'Container spawn error',
       );
-      resolve({
-        status: 'error',
-        result: null,
-        error: `Container spawn error: ${err.message}`,
-        streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
+      outputChain.then(() => {
+        resolve({
+          status: 'error',
+          result: null,
+          error: `Container spawn error: ${err.message}`,
+          streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
+        });
       });
     });
   });

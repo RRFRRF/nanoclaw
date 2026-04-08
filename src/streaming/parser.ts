@@ -24,11 +24,13 @@ import {
 interface ParserConfig {
   maxBufferSize: number;
   enableLegacyParsing: boolean;
+  emitResidualBufferErrors: boolean;
 }
 
 const DEFAULT_CONFIG: ParserConfig = {
   maxBufferSize: 1024 * 1024, // 1MB
   enableLegacyParsing: true,
+  emitResidualBufferErrors: true,
 };
 
 /**
@@ -236,30 +238,30 @@ export class StreamParser {
     const markerIdx = this.buffer.indexOf(marker);
     if (markerIdx === -1) return null;
 
-    // Look for JSON after marker (either on same line or next line)
-    const afterMarker = this.buffer.slice(markerIdx + marker.length);
-    const lines = afterMarker.split('\n');
-
-    // Try first non-empty line as JSON
-    let jsonStr = '';
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed) {
-        jsonStr = trimmed;
-        break;
-      }
+    let jsonStart = markerIdx + marker.length;
+    while (
+      jsonStart < this.buffer.length &&
+      /\s/.test(this.buffer[jsonStart] || '')
+    ) {
+      jsonStart += 1;
     }
 
-    if (!jsonStr) {
-      // No JSON found yet, wait for more data
+    if (jsonStart >= this.buffer.length) {
       return null;
     }
 
-    // Find where this JSON ends (next marker or end of content)
-    let endPos = markerIdx + marker.length;
-    for (const line of lines) {
-      endPos += line.length + 1; // +1 for newline
-      if (line.trim() === jsonStr) break;
+    const firstChar = this.buffer[jsonStart];
+    if (firstChar !== '{' && firstChar !== '[') {
+      return null;
+    }
+
+    const jsonEnd = this.findJsonBoundary(jsonStart);
+    if (jsonEnd === null) return null;
+
+    const jsonStr = this.buffer.slice(jsonStart, jsonEnd);
+    let endPos = jsonEnd;
+    while (endPos < this.buffer.length && /\s/.test(this.buffer[endPos] || '')) {
+      endPos += 1;
     }
 
     this.buffer = this.buffer.slice(0, markerIdx) + this.buffer.slice(endPos);
@@ -282,6 +284,47 @@ export class StreamParser {
     } catch (err) {
       return this.createParseErrorEvent(type, jsonStr, err);
     }
+  }
+
+  private findJsonBoundary(startIdx: number): number | null {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = startIdx; i < this.buffer.length; i += 1) {
+      const char = this.buffer[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (char === '\\') {
+          escaped = true;
+          continue;
+        }
+        if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inString = true;
+        continue;
+      }
+      if (char === '{' || char === '[') {
+        depth += 1;
+        continue;
+      }
+      if (char === '}' || char === ']') {
+        depth -= 1;
+        if (depth === 0) {
+          return i + 1;
+        }
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -396,7 +439,7 @@ export class StreamParser {
     }
 
     // Clear remaining buffer
-    if (this.buffer.trim()) {
+    if (this.config.emitResidualBufferErrors && this.buffer.trim()) {
       // Check if there's any content that might be a partial event
       const trimmed = this.buffer.trim();
       if (trimmed.length > 0) {

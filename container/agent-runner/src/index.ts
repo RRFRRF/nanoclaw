@@ -93,6 +93,12 @@ interface QueryRunResult {
   nativeCompact?: NativeCompactOutcome;
 }
 
+interface NativeStreamConsumeResult {
+  result: unknown;
+  emittedMainAssistantContent: boolean;
+  bufferedMainAssistantText: string;
+}
+
 interface RuntimeAgent {
   invoke: (input: unknown, config?: unknown) => Promise<unknown>;
   stream?: (
@@ -112,6 +118,7 @@ interface NativeStreamBridgeEvent {
   description?: string;
   choice?: string;
   text?: string;
+  replace?: boolean;
 }
 
 type AnyRecord = Record<string, unknown>;
@@ -137,6 +144,7 @@ interface WorkspaceManifest {
 interface MemorySnapshot {
   path: string;
   included: boolean;
+  contentLength: number;
   content: string | null;
 }
 
@@ -153,12 +161,18 @@ interface RuntimeContextSnapshot {
     global: MemorySnapshot;
     project: MemorySnapshot;
   };
-  basePrompt: string;
-  finalPrompt: string;
+  persistedContent: boolean;
+  basePromptLength: number;
+  finalPromptLength: number;
+  basePrompt: string | null;
+  finalPrompt: string | null;
+  runtimeContext: DeepAgentRuntimeContext;
 }
 
 interface RuntimePromptBundle {
   runtimePrompt: string;
+  userPrompt: string;
+  runtimeContext: DeepAgentRuntimeContext;
   snapshot: RuntimeContextSnapshot;
 }
 
@@ -172,6 +186,19 @@ interface ResolvedWorkspaceMemoryFile {
 interface AutoContinueConfig {
   limit: number;
   allowScheduledTasks: boolean;
+}
+
+interface DeepAgentRuntimeContext {
+  workingDirectory: string;
+  writableRoot: string;
+  requiredOutputRoot: string;
+  workspaceManifestPath: string;
+  runtimeContextPath: string;
+  mountedInputs: string[];
+  pendingIpcMessages: string[];
+  isScheduledTask: boolean;
+  sessionId?: string;
+  resumeAt?: string;
 }
 
 export interface ConfiguredMcpServer {
@@ -275,6 +302,20 @@ const DEFAULT_ALLOWED_DECISIONS: HumanDecisionType[] = [
 
 // Global streaming output instance
 const streamingOutput = getStreamingOutput();
+const deepAgentRuntimeContextSchema = z
+  .object({
+    workingDirectory: z.string(),
+    writableRoot: z.string(),
+    requiredOutputRoot: z.string(),
+    workspaceManifestPath: z.string(),
+    runtimeContextPath: z.string(),
+    mountedInputs: z.array(z.string()),
+    pendingIpcMessages: z.array(z.string()),
+    isScheduledTask: z.boolean(),
+    sessionId: z.string().optional(),
+    resumeAt: z.string().optional(),
+  })
+  .passthrough();
 
 function writeOutput(output: ContainerOutput): void {
   // Always write legacy format for backward compatibility
@@ -304,7 +345,7 @@ function formatErrorStack(error: unknown): string | undefined {
 }
 
 function shouldDebugNativeStreaming(): boolean {
-  return process.env.NANOCLAW_DEBUG_NATIVE_STREAM !== 'false';
+  return parseBooleanFlag(process.env.NANOCLAW_DEBUG_NATIVE_STREAM, false);
 }
 
 function describeValueShape(value: unknown): unknown {
@@ -319,10 +360,9 @@ function describeValueShape(value: unknown): unknown {
   if (!value || typeof value !== 'object') {
     return {
       kind: typeof value,
-      value:
-        typeof value === 'string' && value.length > 200
-          ? `${value.slice(0, 200)}...`
-          : value,
+      ...(typeof value === 'string'
+        ? { length: value.length }
+        : { value }),
     };
   }
 
@@ -412,6 +452,13 @@ function formatElapsed(elapsedMs: number): string {
 function parseBooleanFlag(value: string | undefined, defaultValue = false): boolean {
   if (!value) return defaultValue;
   return /^(?:1|true|yes|on)$/i.test(value.trim());
+}
+
+function shouldPersistRuntimeContextContent(): boolean {
+  return parseBooleanFlag(
+    process.env.NANOCLAW_PERSIST_RUNTIME_CONTEXT_CONTENT,
+    false,
+  );
 }
 
 function safeJsonStringify(value: unknown): string {
@@ -571,10 +618,12 @@ async function loadLangGraphHumanInLoopHelpers(): Promise<{
 
 async function createResumeCommandInput(resume: unknown): Promise<unknown> {
   const helpers = await loadLangGraphHumanInLoopHelpers();
-  if (helpers.Command) {
-    return new helpers.Command({ resume });
+  if (!helpers.Command) {
+    throw new Error(
+      'DeepAgents human-in-the-loop Command() is unavailable in this runtime.',
+    );
   }
-  return { resume };
+  return new helpers.Command({ resume });
 }
 
 async function requestHumanInterrupt(payload: unknown): Promise<unknown> {
@@ -946,8 +995,8 @@ function extractTextFromRecordFields(record: AnyRecord): string {
   ];
 
   for (const candidate of candidates) {
-    if (typeof candidate === 'string' && candidate.trim()) {
-      return candidate.trim();
+    if (typeof candidate === 'string' && candidate.length > 0) {
+      return candidate;
     }
   }
 
@@ -963,10 +1012,10 @@ function extractTextFromRecordFields(record: AnyRecord): string {
           contentRecord.delta,
         ].find((value): value is string => typeof value === 'string') || '';
       })
-      .filter((value) => value.trim());
+      .filter((value) => value.length > 0);
 
     if (textParts.length > 0) {
-      return textParts.join('').trim();
+      return textParts.join('');
     }
   }
 
@@ -977,7 +1026,7 @@ export function extractStreamChunkText(chunk: unknown): string {
   const finalAssistantText = extractFinalAssistantText(chunk);
   if (finalAssistantText) return finalAssistantText;
 
-  if (typeof chunk === 'string') return chunk.trim();
+  if (typeof chunk === 'string') return chunk;
   if (!chunk || typeof chunk !== 'object') return '';
 
   return extractTextFromRecordFields(chunk as AnyRecord);
@@ -1055,6 +1104,10 @@ function getNumberField(
 
 function getNamespaceToolSegment(namespace: string[]): string | undefined {
   return namespace.find((segment) => segment.startsWith('tools:'));
+}
+
+export function isNativeMainAssistantNamespace(namespace: string[]): boolean {
+  return !getNamespaceToolSegment(namespace);
 }
 
 function inferNativeStreamMode(data: unknown): string {
@@ -1173,12 +1226,13 @@ function mapUpdatesChunkToBridgeEvents(
 
   const events: NativeStreamBridgeEvent[] = [];
   const sourceLabel = getNamespaceToolSegment(namespace) || 'main';
+  const isMainNamespace = isNativeMainAssistantNamespace(namespace);
 
   for (const [nodeName, nodeData] of Object.entries(data)) {
     events.push({
       type: 'decision',
       description:
-        namespace.length === 0
+        namespace.length === 0 || isMainNamespace
           ? 'Native stream update'
           : `Native subagent update (${sourceLabel})`,
       choice: nodeName,
@@ -1233,6 +1287,7 @@ function mapMessagesChunkToBridgeEvents(
 
   const [message, metadata] = data;
   const events: NativeStreamBridgeEvent[] = [];
+  const isMainNamespace = isNativeMainAssistantNamespace(namespace);
 
   if (isRecord(metadata)) {
     const nodeName = getStringField(
@@ -1245,7 +1300,7 @@ function mapMessagesChunkToBridgeEvents(
       events.push({
         type: 'decision',
         description:
-          namespace.length === 0
+          namespace.length === 0 || isMainNamespace
             ? 'Native message stream'
             : `Native subagent message (${getNamespaceToolSegment(namespace) || 'main'})`,
         choice: nodeName,
@@ -1311,6 +1366,7 @@ function mapMessagesChunkToBridgeEvents(
     events.push({
       type: 'content',
       text,
+      replace: false,
     });
   }
 
@@ -1377,7 +1433,7 @@ async function consumeNativeAgentStream(
   agent: RuntimeAgent,
   invocationInput: unknown,
   baseConfig: AnyRecord,
-): Promise<unknown> {
+): Promise<NativeStreamConsumeResult> {
   appendNativeStreamDebug({
     type: 'stream_start',
     config: {
@@ -1427,7 +1483,6 @@ async function consumeNativeAgentStream(
       type: 'chunk',
       chunkIndex: chunkCount,
       rawShape: describeValueShape(chunk),
-      raw: chunk,
     });
 
     try {
@@ -1458,7 +1513,7 @@ async function consumeNativeAgentStream(
       }
       if (
         normalizedChunk.mode === 'messages' &&
-        normalizedChunk.namespace.length === 0 &&
+        isNativeMainAssistantNamespace(normalizedChunk.namespace) &&
         Array.isArray(normalizedChunk.data)
       ) {
         const [message] = normalizedChunk.data;
@@ -1553,7 +1608,9 @@ async function consumeNativeAgentStream(
           event.text &&
           event.text !== lastEmittedText
         ) {
-          streamingOutput.content(event.text);
+          streamingOutput.content(event.text, {
+            replace: event.replace === true,
+          });
           lastEmittedText = event.text;
         }
       }
@@ -1564,7 +1621,6 @@ async function consumeNativeAgentStream(
         error: formatErrorMessage(err),
         stack: formatErrorStack(err),
         rawShape: describeValueShape(chunk),
-        raw: chunk,
       });
       throw err;
     }
@@ -1578,21 +1634,33 @@ async function consumeNativeAgentStream(
   });
 
   if (interruptChunk) {
-    return interruptChunk;
+    return {
+      result: interruptChunk,
+      emittedMainAssistantContent: false,
+      bufferedMainAssistantText,
+    };
   }
 
   if (bufferedMainAssistantText.trim()) {
     return {
-      messages: [
-        {
-          role: 'assistant',
-          content: bufferedMainAssistantText,
-        },
-      ],
+      result: {
+        messages: [
+          {
+            role: 'assistant',
+            content: bufferedMainAssistantText,
+          },
+        ],
+      },
+      emittedMainAssistantContent: shouldEmitNativeStreamContent(),
+      bufferedMainAssistantText,
     };
   }
 
-  return lastChunk ?? lastEmittedText;
+  return {
+    result: lastChunk ?? lastEmittedText,
+    emittedMainAssistantContent: false,
+    bufferedMainAssistantText,
+  };
 }
 
 function looksLikeDelegationEnvelope(text: string): boolean {
@@ -1641,6 +1709,15 @@ export function getAutoContinueReason(
     return 'delegation envelope emitted without execution';
   }
 
+  if (
+    !resultText &&
+    assistantPlain &&
+    !hasStructuredOnly &&
+    !looksLikePlanningContinuation(assistantPlain)
+  ) {
+    return null;
+  }
+
   if (!resultText && queryResult.sawStatusEvent) {
     return 'tooling status emitted without a final result';
   }
@@ -1653,6 +1730,22 @@ export function getAutoContinueReason(
   }
 
   return null;
+}
+
+export function shouldSuppressLegacyFinalResult(options: {
+  finalText: string;
+  nativeStreamingUsed: boolean;
+  emittedMainAssistantContent: boolean;
+  bufferedMainAssistantText: string;
+}): boolean {
+  if (!options.nativeStreamingUsed) return false;
+  if (!options.emittedMainAssistantContent) return false;
+
+  const finalTrimmed = options.finalText.trim();
+  const streamedTrimmed = options.bufferedMainAssistantText.trim();
+  if (!finalTrimmed || !streamedTrimmed) return false;
+
+  return finalTrimmed === streamedTrimmed;
 }
 
 function shouldClose(): boolean {
@@ -1877,6 +1970,7 @@ function getSubagentModelName(
 ): string {
   const overrideByRole = {
     researcher:
+      process.env.NANOCLAW_SUBAGENT_RESEARCHER_MODEL ||
       process.env.NANOCLAW_SUBAGENT_RESEARCH_MODEL ||
       process.env.NANOCLAW_RESEARCHER_MODEL,
     coder:
@@ -2142,6 +2236,28 @@ function getResolvedWorkspaceMemoryFile(
   );
 }
 
+function buildDeepAgentRuntimeContext(
+  containerInput: ContainerInput,
+  options?: {
+    sessionId?: string;
+    resumeAt?: string;
+    pendingIpcMessages?: string[];
+  },
+): DeepAgentRuntimeContext {
+  return {
+    workingDirectory: GROUP_ROOT,
+    writableRoot: GROUP_ROOT,
+    requiredOutputRoot: REQUIRED_OUTPUT_ROOT,
+    workspaceManifestPath: WORKSPACE_MANIFEST_PATH,
+    runtimeContextPath: RUNTIME_CONTEXT_LATEST,
+    mountedInputs: ['/workspace/project', '/workspace/global', '/workspace/extra'],
+    pendingIpcMessages: options?.pendingIpcMessages || [],
+    isScheduledTask: containerInput.isScheduledTask === true,
+    ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
+    ...(options?.resumeAt ? { resumeAt: options.resumeAt } : {}),
+  };
+}
+
 export function buildRuntimePromptBundle(
   basePrompt: string,
   containerInput: ContainerInput,
@@ -2153,6 +2269,7 @@ export function buildRuntimePromptBundle(
 ): RuntimePromptBundle {
   const sections: string[] = [];
   const pendingIpcMessages = options?.pendingIpcMessages || [];
+  const persistRuntimeContextContent = shouldPersistRuntimeContextContent();
   const runtimeInstructions = [
     'You are running inside NanoHarness on a Deep Agents runtime.',
     `Working directory: ${GROUP_ROOT}`,
@@ -2212,11 +2329,13 @@ export function buildRuntimePromptBundle(
     }
   }
 
-  sections.push(basePrompt);
   const runtimePrompt = sections.join('\n\n');
+  const runtimeContext = buildDeepAgentRuntimeContext(containerInput, options);
 
   return {
     runtimePrompt,
+    userPrompt: basePrompt,
+    runtimeContext,
     snapshot: {
       generatedAt: new Date().toISOString(),
       sessionId: options?.sessionId || null,
@@ -2229,22 +2348,29 @@ export function buildRuntimePromptBundle(
         group: {
           path: groupMemoryFile?.absolutePath || posixPath.join(GROUP_ROOT, 'AGENTS.md'),
           included: groupClaude !== null,
-          content: groupClaude,
+          contentLength: groupClaude?.length || 0,
+          content: persistRuntimeContextContent ? groupClaude : null,
         },
         global: {
           path:
             globalMemoryFile?.absolutePath || posixPath.join(GLOBAL_ROOT, 'AGENTS.md'),
           included: globalClaude !== null,
-          content: globalClaude,
+          contentLength: globalClaude?.length || 0,
+          content: persistRuntimeContextContent ? globalClaude : null,
         },
         project: {
           path: projectMemoryFile?.absolutePath || '/workspace/project/AGENTS.md',
           included: projectClaude !== null,
-          content: projectClaude,
+          contentLength: projectClaude?.length || 0,
+          content: persistRuntimeContextContent ? projectClaude : null,
         },
       },
-      basePrompt,
-      finalPrompt: runtimePrompt,
+      persistedContent: persistRuntimeContextContent,
+      basePromptLength: basePrompt.length,
+      finalPromptLength: runtimePrompt.length,
+      basePrompt: persistRuntimeContextContent ? basePrompt : null,
+      finalPrompt: persistRuntimeContextContent ? runtimePrompt : null,
+      runtimeContext,
     },
   };
 }
@@ -2460,6 +2586,15 @@ export function formatHumanInLoopPrompt(interrupt: unknown): string {
   ].join('\n');
 }
 
+function shouldResumeWithRawUserInput(interrupt: unknown): boolean {
+  if (!isRecord(interrupt)) return false;
+  return (
+    getStringField(interrupt, 'type') === 'nanoclaw_user_input' ||
+    typeof interrupt.question === 'string' ||
+    typeof interrupt.expectedFormat === 'string'
+  );
+}
+
 function formatHumanInLoopResumeError(
   error: unknown,
   interrupt: unknown,
@@ -2576,6 +2711,10 @@ export function parseHumanInLoopResumeInput(
       return parsed.resume;
     }
     return parsed;
+  }
+
+  if (shouldResumeWithRawUserInput(interrupt)) {
+    return trimmed;
   }
 
   if (/^(?:approve|approved|yes|y|ok|okay|continue)\b/i.test(trimmed)) {
@@ -3274,10 +3413,13 @@ async function buildAgent(
   const memory = shouldUseNativeMemory()
     ? buildDeepAgentsMemoryPaths(containerInput)
     : undefined;
+  const runtimePromptBundle = buildRuntimePromptBundle('', containerInput);
 
   const agent = (await createDeepAgent({
     name: getDeepAgentName(containerInput),
     model,
+    systemPrompt: runtimePromptBundle.runtimePrompt,
+    contextSchema: deepAgentRuntimeContextSchema,
     backend,
     tools,
     skills,
@@ -3330,6 +3472,9 @@ async function runQuery(
   let invocationInput: unknown;
   let shouldRetryFromLatest = false;
   let checkpointTarget = resumeAt;
+  let nativeStreamingUsed = false;
+  let emittedMainAssistantContent = false;
+  let bufferedMainAssistantText = '';
 
   if (pendingInterrupt) {
     emitStatus('Resuming Deep Agents query from pending user input...', true);
@@ -3365,7 +3510,7 @@ async function runQuery(
   } else {
     emitStatus('Starting Deep Agents query...', true);
 
-    const { runtimePrompt, snapshot } = buildRuntimePromptBundle(
+    const { userPrompt, snapshot } = buildRuntimePromptBundle(
       prompt,
       containerInput,
       {
@@ -3376,7 +3521,7 @@ async function runQuery(
     );
     writeRuntimeContextSnapshot(snapshot);
     invocationInput = {
-      messages: [{ role: 'user', content: runtimePrompt }],
+      messages: [{ role: 'user', content: userPrompt }],
     };
     shouldRetryFromLatest = true;
   }
@@ -3385,15 +3530,32 @@ async function runQuery(
     configurable: {
       thread_id: nextSessionId,
     },
+    context: buildDeepAgentRuntimeContext(containerInput, {
+      sessionId: nextSessionId,
+      resumeAt,
+      pendingIpcMessages,
+    }),
     recursionLimit: QUERY_RECURSION_LIMIT,
   };
 
   const invokeWithoutNativeStreaming = async (): Promise<unknown> =>
     agent.invoke(invocationInput, baseConfig);
 
+  const invokeWithNativeStreaming = async (): Promise<unknown> => {
+    const streamed = await consumeNativeAgentStream(
+      agent,
+      invocationInput,
+      baseConfig,
+    );
+    nativeStreamingUsed = true;
+    emittedMainAssistantContent = streamed.emittedMainAssistantContent;
+    bufferedMainAssistantText = streamed.bufferedMainAssistantText;
+    return streamed.result;
+  };
+
   const invokeWithCurrentMode = async (): Promise<unknown> =>
     shouldUseNativeStreaming(agent)
-      ? await consumeNativeAgentStream(agent, invocationInput, baseConfig)
+      ? await invokeWithNativeStreaming()
       : await invokeWithoutNativeStreaming();
 
   let result: unknown;
@@ -3519,7 +3681,15 @@ async function runQuery(
 
   const finalText = extractFinalAssistantText(result);
 
-  if (finalText) {
+  if (
+    finalText &&
+    !shouldSuppressLegacyFinalResult({
+      finalText,
+      nativeStreamingUsed,
+      emittedMainAssistantContent,
+      bufferedMainAssistantText,
+    })
+  ) {
     writeOutput({
       status: 'success',
       result: finalText,

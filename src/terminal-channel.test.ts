@@ -445,6 +445,29 @@ describe('TerminalChannel', () => {
     ).toBe(true);
   });
 
+  it('labels stream events with the emitting agent instead of the current selection', async () => {
+    const channel = new TerminalChannel(deps as any);
+    await channel.connect();
+
+    await inkState.mountedProps.onSubmit('/switch two');
+    await channel.handleStreamEvent('local:one', {
+      type: 'decision',
+      timestamp: 't5',
+      data: {
+        description: 'Background task',
+        choice: 'done',
+      },
+    } as any);
+
+    expect(
+      storeState.messages.some(
+        (message) =>
+          message.label === 'agent:one' &&
+          message.text === 'Background task: done',
+      ),
+    ).toBe(true);
+  });
+
   it('submits normal input and command input through mounted handlers', async () => {
     const channel = new TerminalChannel(deps as any);
     await channel.connect();

@@ -385,6 +385,17 @@ export async function processTaskIpc(
             if (!isNaN(ms) && ms > 0) {
               updates.next_run = new Date(Date.now() + ms).toISOString();
             }
+          } else if (updatedTask.schedule_type === 'once') {
+            const date = new Date(updatedTask.schedule_value);
+            if (!Number.isNaN(date.getTime())) {
+              updates.next_run = date.toISOString();
+            } else {
+              logger.warn(
+                { taskId: data.taskId, value: updatedTask.schedule_value },
+                'Invalid once timestamp in task update',
+              );
+              break;
+            }
           }
         }
 

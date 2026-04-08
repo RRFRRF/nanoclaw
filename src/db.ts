@@ -15,6 +15,33 @@ import {
 
 let db: Database.Database;
 
+function getTableColumns(
+  database: Database.Database,
+  tableName: string,
+): Set<string> {
+  const rows = database
+    .prepare(`PRAGMA table_info(${tableName})`)
+    .all() as Array<{ name: string }>;
+  return new Set(rows.map((row) => row.name));
+}
+
+function parseRegisteredGroupContainerConfig(
+  jid: string,
+  raw: string | null,
+): RegisteredGroup['containerConfig'] | undefined {
+  if (!raw) return undefined;
+
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    logger.warn(
+      { jid, error, containerConfigPreview: raw.slice(0, 200) },
+      'Skipping invalid registered group container_config JSON',
+    );
+    return undefined;
+  }
+}
+
 function createSchema(database: Database.Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS chats (
@@ -122,25 +149,26 @@ function createSchema(database: Database.Database): void {
   }
 
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
-  try {
+  const chatColumns = getTableColumns(database, 'chats');
+  if (!chatColumns.has('channel')) {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
-    database.exec(`ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`);
-    // Backfill from JID patterns
-    database.exec(
-      `UPDATE chats SET channel = 'whatsapp', is_group = 1 WHERE jid LIKE '%@g.us'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'whatsapp', is_group = 0 WHERE jid LIKE '%@s.whatsapp.net'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'discord', is_group = 1 WHERE jid LIKE 'dc:%'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'telegram', is_group = 1 WHERE jid LIKE 'tg:%'`,
-    );
-  } catch {
-    /* columns already exist */
   }
+  if (!chatColumns.has('is_group')) {
+    database.exec(`ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`);
+  }
+  // Backfill from JID patterns
+  database.exec(
+    `UPDATE chats SET channel = 'whatsapp', is_group = 1 WHERE jid LIKE '%@g.us'`,
+  );
+  database.exec(
+    `UPDATE chats SET channel = 'whatsapp', is_group = 0 WHERE jid LIKE '%@s.whatsapp.net'`,
+  );
+  database.exec(
+    `UPDATE chats SET channel = 'discord', is_group = 1 WHERE jid LIKE 'dc:%'`,
+  );
+  database.exec(
+    `UPDATE chats SET channel = 'telegram', is_group = 1 WHERE jid LIKE 'tg:%'`,
+  );
 
   // Add resume_at column if it doesn't exist (migration for existing DBs)
   try {
@@ -164,6 +192,16 @@ export function initDatabase(): void {
 /** @internal - for tests only. Creates a fresh in-memory database. */
 export function _initTestDatabase(): void {
   db = new Database(':memory:');
+  createSchema(db);
+}
+
+/** @internal - for tests only. */
+export function _getTestDatabaseHandle(): Database.Database {
+  return db;
+}
+
+/** @internal - for tests only. */
+export function _runCreateSchemaForTests(): void {
   createSchema(db);
 }
 
@@ -598,9 +636,10 @@ export function getRegisteredGroup(
     folder: row.folder,
     trigger: row.trigger_pattern,
     added_at: row.added_at,
-    containerConfig: row.container_config
-      ? JSON.parse(row.container_config)
-      : undefined,
+    containerConfig: parseRegisteredGroupContainerConfig(
+      row.jid,
+      row.container_config,
+    ),
     requiresTrigger:
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
@@ -657,9 +696,10 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       folder: row.folder,
       trigger: row.trigger_pattern,
       added_at: row.added_at,
-      containerConfig: row.container_config
-        ? JSON.parse(row.container_config)
-        : undefined,
+      containerConfig: parseRegisteredGroupContainerConfig(
+        row.jid,
+        row.container_config,
+      ),
       requiresTrigger:
         row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       isMain: row.is_main === 1 ? true : undefined,

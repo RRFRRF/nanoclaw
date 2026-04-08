@@ -54,6 +54,7 @@ vi.mock('fs', async () => {
 
 describe('ipc mcp stdio tools', () => {
   beforeEach(async () => {
+    vi.resetModules();
     state.tools.clear();
     vi.clearAllMocks();
     await import('./ipc-mcp-stdio.ts');
@@ -71,5 +72,29 @@ describe('ipc mcp stdio tools', () => {
     expect(result.content[0].text).toBe('Message sent.');
     expect(state.writeFileSync).toHaveBeenCalled();
     expect(state.renameSync).toHaveBeenCalled();
+  });
+
+  it('does not force cron validation when update_task only changes schedule_value', async () => {
+    const updateTask = state.tools.get('update_task');
+    const result = await updateTask!({
+      task_id: 'task-1',
+      schedule_value: '60000',
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0].text).toContain('update requested');
+    expect(state.writeFileSync).toHaveBeenCalled();
+  });
+
+  it('still validates cron expressions when update_task explicitly sets cron', async () => {
+    const updateTask = state.tools.get('update_task');
+    const result = await updateTask!({
+      task_id: 'task-1',
+      schedule_type: 'cron',
+      schedule_value: 'not-a-cron',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Invalid cron');
   });
 });

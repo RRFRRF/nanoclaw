@@ -2,6 +2,7 @@ import { mountTerminalInkApp, TerminalInkStore } from './terminal-ink.js';
 import { subscribeTerminalLogs, TerminalLogItem } from './terminal-log-sink.js';
 import { getTerminalOptions } from './terminal-options.js';
 import { AgentStreamEvent, Channel, NewMessage } from './types.js';
+import { Interface, createInterface } from 'readline';
 import {
   StreamEvent,
   StreamProcessor,
@@ -471,6 +472,7 @@ export class TerminalChannel implements Channel {
   private readonly terminalOptions = getTerminalOptions();
   private inkStore: TerminalInkStore | null = null;
   private inkApp: { unmount: () => void } | null = null;
+  private plainReadline: Interface | null = null;
   private unsubscribeInkLogs: (() => void) | null = null;
   private streamProcessor: StreamProcessor | null = null;
   private streamEvents: StreamEvent[] = [];
@@ -490,7 +492,11 @@ export class TerminalChannel implements Channel {
     }
 
     this.selectInitialAgent();
-    this.connectInkMode();
+    if (this.isPlainTerminalMode()) {
+      this.connectPlainMode();
+    } else {
+      this.connectInkMode();
+    }
   }
 
   async disconnect(): Promise<void> {
@@ -504,6 +510,10 @@ export class TerminalChannel implements Channel {
     if (this.inkApp) {
       this.inkApp.unmount();
       this.inkApp = null;
+    }
+    if (this.plainReadline) {
+      this.plainReadline.close();
+      this.plainReadline = null;
     }
     if (this.unsubscribeInkLogs) {
       this.unsubscribeInkLogs();
@@ -526,6 +536,52 @@ export class TerminalChannel implements Channel {
 
   ownsJid(jid: string): boolean {
     return jid.startsWith('local:');
+  }
+
+  private isPlainTerminalMode(): boolean {
+    return (
+      process.env.NANOCLAW_TERMINAL_TEST_MODE === 'true' ||
+      process.env.NANOCLAW_TERMINAL_PLAIN_MODE === 'true'
+    );
+  }
+
+  private writePlainMessage(message: {
+    label: string;
+    text: string;
+  }): void {
+    const lines = message.text.split(/\r?\n/);
+    process.stdout.write(`${message.label}\n`);
+    for (const line of lines) {
+      process.stdout.write(`| ${line}\n`);
+    }
+  }
+
+  private connectPlainMode(): void {
+    if (this.plainReadline) return;
+
+    this.inkStore = ({
+      addMessage: (message: any) => this.writePlainMessage(message),
+      completeMessage: (message: any) => this.writePlainMessage(message),
+      flushLiveMessage: () => {},
+      setContext: () => {},
+      dispose: () => {},
+    } as unknown) as TerminalInkStore;
+
+    this.inkStore.addMessage({
+      id: `system-${Date.now()}`,
+      label: 'system',
+      text: 'Terminal mode ready. Type /help for commands.',
+      tone: 'system',
+    });
+
+    this.plainReadline = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: false,
+    });
+    this.plainReadline.on('line', (line) => {
+      void this.submitInkLine(line);
+    });
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
@@ -570,12 +626,13 @@ export class TerminalChannel implements Channel {
     this.refreshInkContext();
   }
 
-  async handleStreamEvent(_jid: string, event: StreamEvent): Promise<void> {
+  async handleStreamEvent(jid: string, event: StreamEvent): Promise<void> {
     this.streamEvents.push(event);
 
-    const current = this.currentAgent();
-    const label = current ? current.name : 'agent';
-    const items = mapStreamEventToRenderItems(_jid, `agent:${label}`, event);
+    const agent = this.agentByJid(jid);
+    const label = agent ? agent.name : jid;
+    this.setTransientStatus(jid, 'running', 15000);
+    const items = mapStreamEventToRenderItems(jid, `agent:${label}`, event);
 
     for (const item of items) {
       this.inkStore?.addMessage({
@@ -584,6 +641,7 @@ export class TerminalChannel implements Channel {
         text: item.text,
         tone: item.tone,
         mergeKey: item.mergeKey,
+        mergeMode: item.mergeMode,
       });
     }
 

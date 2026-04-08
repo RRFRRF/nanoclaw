@@ -677,3 +677,37 @@ describe('register_group success', () => {
     expect(getRegisteredGroup('partial@g.us')).toBeUndefined();
   });
 });
+
+describe('update_task schedule recomputation', () => {
+  it('recomputes next_run when update_task switches to once', async () => {
+    createTask({
+      id: 'task-update-once',
+      group_folder: 'other-group',
+      chat_jid: 'other@g.us',
+      prompt: 'original',
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      context_mode: 'isolated',
+      next_run: '2025-06-01T00:00:00.000Z',
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-update-once',
+        schedule_type: 'once',
+        schedule_value: '2025-07-01T09:30:00',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    expect(getTaskById('task-update-once')?.schedule_type).toBe('once');
+    expect(getTaskById('task-update-once')?.next_run).toBe(
+      new Date('2025-07-01T09:30:00').toISOString(),
+    );
+  });
+});

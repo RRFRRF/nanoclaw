@@ -138,6 +138,18 @@ ${STREAM_MARKERS.PLAN_END}`;
       expect(events).toHaveLength(1);
       expect(events[0].type).toBe('tool_complete');
     });
+
+    it('waits for a complete single-line JSON event across chunk boundaries', () => {
+      const events1 = parser.parseChunk(
+        `${STREAM_MARKERS.TOOL_START}{"type":"tool_start","timestamp":"2024-01-01T00:00:00Z","data":{"toolId":"t1","name":"read`,
+      );
+      expect(events1).toHaveLength(0);
+
+      const events2 = parser.parseChunk(`_file","input":{"path":"/test"}}}`);
+      expect(events2).toHaveLength(1);
+      expect(events2[0].type).toBe('tool_start');
+      expect((events2[0].data as { name: string }).name).toBe('read_file');
+    });
   });
 
   describe('decision parsing', () => {
@@ -242,6 +254,13 @@ ${STREAM_MARKERS.THINKING_END}`;
 
       expect(events.length).toBeGreaterThan(0);
       expect(events[events.length - 1].type).toBe('error');
+    });
+
+    it('"can suppress residual buffer errors when mixed stdout is expected"', () => {
+      const quietParser = new StreamParser({ emitResidualBufferErrors: false });
+      quietParser.parseChunk('"unparsed content"');
+
+      expect(quietParser.flush()).toEqual([]);
     });
   });
 

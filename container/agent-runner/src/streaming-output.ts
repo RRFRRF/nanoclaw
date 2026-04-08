@@ -286,8 +286,11 @@ export class StreamingOutput {
   /**
    * Emit final content
    */
-  content(text: string): void {
-    this.emitEvent('content', { text });
+  content(text: string, options?: { replace?: boolean }): void {
+    this.emitEvent('content', {
+      text,
+      replace: options?.replace === true,
+    });
   }
 
   /**

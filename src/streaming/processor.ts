@@ -30,6 +30,7 @@ export interface ProcessOptions {
   showTools?: boolean;
   collapseThinking?: boolean;
   maxEvents?: number;
+  emitResidualBufferErrors?: boolean;
 }
 
 // Current execution status
@@ -87,6 +88,7 @@ export class StreamProcessor {
     this.parser = new StreamParser({
       maxBufferSize: 1024 * 1024,
       enableLegacyParsing,
+      emitResidualBufferErrors: this.options.emitResidualBufferErrors !== false,
     });
 
     this.currentStatus = {
@@ -133,10 +135,7 @@ export class StreamProcessor {
       this.updateState(event);
 
       // Store event
-      this.events.push(event);
-      if (this.events.length > (this.options.maxEvents || 10000)) {
-        this.events = this.events.slice(-this.options.maxEvents!);
-      }
+      this.storeEvent(event);
 
       // Update stats
       this.updateStats(event);
@@ -148,6 +147,13 @@ export class StreamProcessor {
     }
 
     return filteredEvents;
+  }
+
+  private storeEvent(event: StreamEvent): void {
+    this.events.push(event);
+    if (this.events.length > (this.options.maxEvents || 10000)) {
+      this.events = this.events.slice(-this.options.maxEvents!);
+    }
   }
 
   /**
@@ -412,6 +418,7 @@ export class StreamProcessor {
     for (const event of events) {
       if (this.shouldShowEvent(event)) {
         this.updateState(event);
+        this.storeEvent(event);
         this.updateStats(event);
         this.triggerCallbacks(event);
         filteredEvents.push(event);

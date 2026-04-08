@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { createServer } from 'net';
 
 import {
   AGENT_MAX_RETRIES,
@@ -10,6 +11,7 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
+  setCredentialProxyPort,
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
@@ -97,6 +99,7 @@ let messageLoopRunning = false;
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 const TERMINAL_MODE = process.argv.includes('--terminal');
+const TERMINAL_TEST_MODE = process.env.NANOCLAW_TERMINAL_TEST_MODE === 'true';
 
 function isLocalTerminalJid(jid: string): boolean {
   return jid.startsWith('local:');
@@ -452,9 +455,11 @@ export function getAvailableGroups(): import('./container-runner.js').AvailableG
 }
 
 export const __testInternals = {
+  findAvailablePort,
   persistSessionFromOutput,
   processGroupMessages,
   runAgent,
+  startCredentialProxyWithFallback,
   upsertSessionState,
 };
 
@@ -914,19 +919,73 @@ function ensureContainerSystemRunning(): void {
   cleanupOrphans();
 }
 
+async function findAvailablePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.unref();
+    server.on('error', reject);
+    server.listen(0, PROXY_BIND_HOST, () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        server.close();
+        reject(new Error('Failed to allocate an available credential proxy port'));
+        return;
+      }
+      const port = address.port;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
+}
+
+async function startCredentialProxyWithFallback(
+  preferredPort: number,
+): Promise<{ close: () => void }> {
+  setCredentialProxyPort(preferredPort);
+  try {
+    return await startCredentialProxy(preferredPort, PROXY_BIND_HOST);
+  } catch (error) {
+    const code =
+      error && typeof error === 'object' && 'code' in error
+        ? (error as { code?: string }).code
+        : undefined;
+    if (code !== 'EADDRINUSE') {
+      throw error;
+    }
+
+    const fallbackPort = await findAvailablePort();
+    logger.warn(
+      {
+        preferredPort,
+        fallbackPort,
+        host: PROXY_BIND_HOST,
+      },
+      'Credential proxy port already in use, falling back to an available port',
+    );
+    setCredentialProxyPort(fallbackPort);
+    return startCredentialProxy(fallbackPort, PROXY_BIND_HOST);
+  }
+}
+
 async function main(): Promise<void> {
   acquireServiceLock();
-  ensureContainerSystemRunning();
+  if (!TERMINAL_TEST_MODE) {
+    ensureContainerSystemRunning();
+  }
   initDatabase();
   logger.info('Database initialized');
   loadState();
   restoreRemoteControl();
 
   // Start credential proxy (containers route API calls through this)
-  const proxyServer = await startCredentialProxy(
-    CREDENTIAL_PROXY_PORT,
-    PROXY_BIND_HOST,
-  );
+  const proxyServer: { close: () => void } = TERMINAL_TEST_MODE
+    ? { close: () => {} }
+    : await startCredentialProxyWithFallback(CREDENTIAL_PROXY_PORT);
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
@@ -1025,7 +1084,7 @@ async function main(): Promise<void> {
   // Create and connect all registered channels.
   // Each channel self-registers via the barrel import above.
   // Factories return null when credentials are missing, so unconfigured channels are skipped.
-  for (const channelName of getRegisteredChannelNames()) {
+  if (!TERMINAL_TEST_MODE) for (const channelName of getRegisteredChannelNames()) {
     const factory = getChannelFactory(channelName)!;
     const channel = factory(channelOpts);
     if (!channel) {

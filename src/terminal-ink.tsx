@@ -391,7 +391,7 @@ export class TerminalInkStore {
           message.mergeMode === 'replace'
             ? text
             : live.text
-              ? `${live.text}\n${text}`
+              ? `${live.text}${text}`
               : text;
         this.restartLiveFinalizeTimer();
         this.emit();

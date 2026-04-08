@@ -351,6 +351,18 @@ describe('StreamProcessor', () => {
   });
 
   describe('resource cleanup', () => {
+    it('stores flushed events in history as well as returning them', () => {
+      const partial = `${createEventChunk('thinking', { content: 'buffered' })}garbage`;
+      processor.processChunk(partial);
+
+      const flushed = processor.flush();
+
+      expect(flushed.some((event) => event.type === 'error')).toBe(true);
+      expect(processor.getEvents().some((event) => event.type === 'error')).toBe(
+        true,
+      );
+    });
+
     it('should clear all state', () => {
       processor.processChunk(
         createEventChunk('plan', {

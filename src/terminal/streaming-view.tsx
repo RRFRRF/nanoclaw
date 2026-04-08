@@ -255,8 +255,9 @@ export function StreamingView({ events, options }: StreamingViewProps): React.Re
           tool.status = 'completed';
         }
       } else if (isContentEvent(event)) {
-        const data = event.data as { text: string };
-        content = data.text;
+        const data = event.data as { text: string; replace?: boolean };
+        content =
+          data.replace === true || !content ? data.text : `${content}${data.text}`;
       } else if (isCompleteEvent(event)) {
         isComplete = true;
       } else if (isErrorEvent(event)) {
