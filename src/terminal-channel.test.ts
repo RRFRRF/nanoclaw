@@ -454,7 +454,10 @@ describe('TerminalChannel', () => {
     const channel = new TerminalChannel(deps as any);
     await channel.connect();
 
-    inkState.subscribedHandler?.({ type: 'text', text: '[stream] before native' });
+    inkState.subscribedHandler?.({
+      type: 'text',
+      text: '[stream] before native',
+    });
     expect(
       storeState.messages.some((m) => m.text === '[stream] before native'),
     ).toBe(true);
@@ -468,7 +471,10 @@ describe('TerminalChannel', () => {
     const suppressedCount = storeState.messages.filter(
       (m) => m.text === '[stream] after native',
     ).length;
-    inkState.subscribedHandler?.({ type: 'text', text: '[stream] after native' });
+    inkState.subscribedHandler?.({
+      type: 'text',
+      text: '[stream] after native',
+    });
     expect(
       storeState.messages.filter((m) => m.text === '[stream] after native')
         .length,
@@ -520,11 +526,10 @@ describe('TerminalChannel', () => {
           m.mergeKey === 'local:one:t0',
       ),
     ).toBe(false);
-    expect(storeState.completedMessages.some((m) => m.mergeKey === 'local:one:t0')).toBe(
-      false,
-    );
+    expect(
+      storeState.completedMessages.some((m) => m.mergeKey === 'local:one:t0'),
+    ).toBe(false);
   });
-
 
   it('uses a new merge key for the next turn after final agent output', async () => {
     const channel = new TerminalChannel(deps as any);

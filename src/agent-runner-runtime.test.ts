@@ -490,7 +490,6 @@ describe('agent runner runtime diagnostics', () => {
     expect(bundle.runtimePrompt).not.toContain('project memory');
   });
 
-
   it('prefers AGENTS.md over CLAUDE.md for native memory resolution metadata', async () => {
     const mod = await loadRuntimeModule();
 
@@ -525,7 +524,6 @@ describe('agent runner runtime diagnostics', () => {
       '/workspace/project/AGENTS.md',
     );
   });
-
 
   it('can opt back into persisting full runtime context content for debugging', async () => {
     const mod = await loadRuntimeModule();
@@ -1097,9 +1095,7 @@ describe('agent runner runtime diagnostics', () => {
       'Make the smallest correct code changes',
     );
     expect(subagents[2].systemPrompt).toContain('reviewer subagent');
-    expect(subagents[2].systemPrompt).toContain(
-      'return findings first',
-    );
+    expect(subagents[2].systemPrompt).toContain('return findings first');
 
     delete process.env.NANOCLAW_SUBAGENT_REVIEWER_MODEL;
   });
@@ -1123,7 +1119,6 @@ describe('agent runner runtime diagnostics', () => {
 
     delete process.env.NANOCLAW_SUBAGENT_REVIEWER_SKILLS;
   });
-
 
   it('can disable predefined subagents with an environment flag', async () => {
     const mod = await loadRuntimeModule();

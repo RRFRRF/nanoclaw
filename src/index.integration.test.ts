@@ -359,7 +359,6 @@ describe('index orchestration integration', () => {
     });
   });
 
-
   it('falls back to a free credential proxy port when the preferred port is busy', async () => {
     const close = vi.fn();
     const error = Object.assign(new Error('listen EADDRINUSE'), {
